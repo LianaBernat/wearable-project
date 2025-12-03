@@ -5,6 +5,7 @@ run_all.py — Executes the full Capture-24 pipeline, including:
 2. Join chunk files per participant
 3. Join all participants into final dataset
 4. Train model on the final dataset
+5. ....
 """
 
 import time
