@@ -1,10 +1,52 @@
-# app.py
+# streamlit_app/app.py
+"""
+Streamlit app to upload accelerometer data and display predicted activities
+"""
+
+
+from pathlib import Path
+import time
+
+import json
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-from pathlib import Path
-import joblib
-from tensorflow import keras
+
+# -----------------------------
+# PATHS
+# -----------------------------
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+API_DIR = BASE_DIR / "api"  # or "api" if your folder is lowercase
+MODEL_DIR = API_DIR / "model"
+JSON_PATH = BASE_DIR / "data" / "response_1765050557889.json"
+
+
+# --- Guidelines for summary (hours per day) ---
+
+GUIDELINES = {
+    "18-29": {"sleep_min": 7, "sleep_max": 9, "mvpa_min": 0.5, "mvpa_max": 1.5, "sedentary_max": 8},
+    "30-37": {"sleep_min": 7, "sleep_max": 9, "mvpa_min": 0.5, "mvpa_max": 1.5, "sedentary_max": 8},
+    "38-52": {"sleep_min": 7, "sleep_max": 9, "mvpa_min": 0.5, "mvpa_max": 1.5, "sedentary_max": 8},
+    "53+":   {"sleep_min": 7, "sleep_max": 8, "mvpa_min": 0.5, "mvpa_max": 1.5, "sedentary_max": 8},
+}
+
+SEDENTARY_10 = {"sitting", "vehicle"}
+MVPA_10 = {"walking", "bicycling", "sports", "manual-work"}
+SLEEP_10 = {"sleep"}
+
+
+
+def classify_against_range(value: float, min_val: float | None, max_val: float | None) -> str:
+    """
+    Simple text classification vs guideline range.
+    """
+    if min_val is not None and value < min_val:
+        return "below"
+    if max_val is not None and value > max_val:
+        return "above"
+    return "within"
 
 
 # Optional: if you'll call an API instead of loading a local model
@@ -14,117 +56,109 @@ from tensorflow import keras
 # CONFIG
 # -----------------------------
 st.set_page_config(
-    page_title="Wearable Activity Classifier",
-    page_icon="⏱️",
-    layout="wide"
+    page_title="Wearable Activity Classifier", page_icon="⏱️", layout="wide"
 )
 
-REQUIRED_COLUMNS = ["timestamp", "x", "y", "z"]
-MODEL_DIR = Path("model")
-
-
+REQUIRED_COLUMNS = ["time", "x", "y", "z"]
+WINDOW_SECONDS = 30
 
 # -----------------------------
-# MODEL / PIPELINE PLACEHOLDERS
+# Loading fake predictions for demo
 # -----------------------------
-@st.cache_resource
-def load_artifacts():
-    """
-    Load preprocessor, feature names and Keras model once.
-    Cached by Streamlit so it doesn't reload every time.
-    """
-    preprocessor = joblib.load(MODEL_DIR / "preprocessor.joblib")
 
-    # Optional: may be useful later for explanations
-    try:
-        feature_names = joblib.load(MODEL_DIR / "feature_names.joblib")
-    except Exception:
-        feature_names = None
 
-    # For now we'll use the 4-classes model.
-    # If you want the 10-classes one, change the filename here.
-    model = keras.models.load_model(MODEL_DIR / "map_baseline_4classes.keras")
+def load_fake_predictions() -> dict:
+    """
+    Load fake predictions for both models from JSON.
+
+    Expects JSON like:
+    {
+      "willetts_10classes": [...],
+      "walmsley_4classes": [...]
+    }
+
+    Returns dict with two DataFrames:
+      - preds["walmsley_4classes"]
+      - preds["willetts_10classes"]
+    """
+    with open(JSON_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    dfs = {}
+
+    for key in ["walmsley_4classes", "willetts_10classes"]:
+        if key not in data:
+            raise ValueError(
+                f"Key '{key}' not found in JSON. Available: {list(data.keys())}"
+            )
+
+        records = data[key]
+        df_model = pd.DataFrame(records)
+
+        if "window_start" not in df_model.columns or "label" not in df_model.columns:
+            raise ValueError(
+                f"JSON list '{key}' must contain 'window_start' and 'label'."
+            )
+
+        df_model = df_model.rename(
+            columns={"window_start": "timestamp", "label": "predicted_activity"}
+        )
+
+        if "label_id" in df_model.columns:
+            df_model = df_model.drop(columns=["label_id"])
+
+        dfs[key] = df_model
+
+    return dfs
+
+# -----------------------------
+# Aggregation functions
+# -----------------------------
+
+def aggregate_4class(dist_4: pd.DataFrame) -> dict:
+    """
+    dist_4 has columns: activity, count, percentage, hours
+    We normalize activities to lowercase to avoid case mismatches.
+    """
+    # build dict with lowercase keys
+    hours_by_act = {str(a).lower(): float(h) for a, h in zip(dist_4["activity"], dist_4["hours"])}
+
+    sleep_h = hours_by_act.get("sleep", 0.0)
+    sed_h = hours_by_act.get("sedentary", 0.0)
+    mvpa_h = hours_by_act.get("moderate-vigorous", 0.0)
+    light_h = hours_by_act.get("light", 0.0)
 
     return {
-        "preprocessor": preprocessor,
-        "feature_names": feature_names,
-        "model": model,
+        "sleep_h": sleep_h,
+        "sedentary_h": sed_h,
+        "mvpa_h": mvpa_h,
+        "light_h": light_h,
+    }
+
+
+def aggregate_10class(dist_10: pd.DataFrame) -> dict:
+    """
+    dist_10 has columns: activity, count, percentage, hours
+    Aggregate into sleep / sedentary / mvpa buckets.
+    """
+    hours_by_act = dict(zip(dist_10["activity"], dist_10["hours"]))
+
+    sleep_h = sum(hours_by_act.get(a, 0.0) for a in SLEEP_10)
+    sed_h = sum(hours_by_act.get(a, 0.0) for a in SEDENTARY_10)
+    mvpa_h = sum(hours_by_act.get(a, 0.0) for a in MVPA_10)
+
+    return {
+        "sleep_h": float(sleep_h),
+        "sedentary_h": float(sed_h),
+        "mvpa_h": float(mvpa_h),
     }
 
 
 
-def prepare_features(df: pd.DataFrame, preprocessor) -> np.ndarray:
-    """
-    Apply the SAME preprocessing as you used during training.
-
-    Assumption:
-    - `preprocessor` is a scikit-learn transformer (ColumnTransformer, Pipeline, etc.)
-      saved with joblib.
-    - It expects the raw dataframe with the same columns as in training.
-
-    If during training you selected only some columns, reflect that here.
-    """
-    # Example: keep just the raw sensor columns if that’s what you used
-    # Adjust according to your training code
-    # X_raw = df[["acc_x", "acc_y", "acc_z"]].copy()
-
-    X_raw = df.copy()  # more permissive: pass full df to preprocessor
-
-    X = preprocessor.transform(X_raw)
-    return X
-
-
-
-def predict_activities(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Run the model and return predictions merged with the original dataframe.
-    """
-
-    artifacts = load_artifacts()
-    preprocessor = artifacts["preprocessor"]
-    model = artifacts["model"]
-
-    # 1) Prepare features with the saved preprocessor
-    X = prepare_features(df, preprocessor)
-
-    # 2) Predict with Keras model
-    # Most likely you trained a softmax classifier, so `predict` returns probabilities.
-    probas = model.predict(X, verbose=0)
-    y_idx = probas.argmax(axis=1)
-
-    # TODO: Plug label mapping if you have a label_encoder saved somewhere.
-    # For now we’ll just show the class indices.
-    # If you know the order of classes, define them here and map:
-    #
-    # class_labels = ["Sleeping", "Running", "Sitting", "Walking"]
-    # y_labels = [class_labels[i] for i in y_idx]
-    #
-    # For now, just use numeric indices:
-    y_labels = y_idx
-
-    results = df.copy()
-    results["predicted_activity"] = y_labels
-
-    return results
-
-
-# If you're using an API (FastAPI for example), you'd do something like:
-# """
-#def predict_activities_via_api(df: pd.DataFrame) -> pd.DataFrame:
-#    payload = {
-#        "data": df.to_dict(orient="records")
-#    }
-#    response = requests.post("http://localhost:8000/predict", json=payload)
-#    response.raise_for_status()
-#    preds = response.json()["predictions"]  # depends on your API schema
-#
-#    results = df.copy()
-#    results["predicted_activity"] = preds
-#    return results
-# """
 # -----------------------------
 # UI LAYOUT
 # -----------------------------
+
 st.title("Wearable Activity Classifier – Demo")
 st.write(
     "Upload accelerometer data from a wearable device and preview the predicted activities "
@@ -140,133 +174,262 @@ with st.form("user_form"):
     with col1:
         user_name = st.text_input("Name", value="")
     with col2:
-        age = st.selectbox("Age", options=['18-29', '30-37', '38-52', '53+'])
+        age = st.selectbox("Age", options=["18-29", "30-37", "38-52", "53+"])
     with col3:
         sex = st.selectbox("Sex", options=["Male", "Female"])
 
+    # Mapear label -> chave no JSON
+    model_choice_map = {
+        "4-class model (walmsley_4classes)": "walmsley_4classes",
+        "10-class model (willetts_10classes)": "willetts_10classes",
+    }
+
     st.markdown("### Upload accelerometer data")
     uploaded_file = st.file_uploader(
-        "CSV or Parquet file (one participant, 24h data or selected window)",
-        type=["csv", "parquet"]
+        "CSV or Parquet file (accelerometer data)", type=["csv", "parquet"]
     )
 
     submitted = st.form_submit_button("Run analysis")
 
+
 # -----------------------------
 # WHEN USER SUBMITS
 # -----------------------------
+
 if submitted:
-    # Basic validation
     if not user_name:
         st.error("Please enter a name.")
         st.stop()
 
     if uploaded_file is None:
-        st.error("Please upload a CSV file.")
+        st.error("Please upload a file (.csv or .parquet).")
         st.stop()
 
-    # Read CSV or Parquet
+    # Ler o arquivo só para "validar" (não será usado na predição)
     try:
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-
-        elif uploaded_file.name.endswith(".parquet"):
-            df = pd.read_parquet(uploaded_file)
-
+        filename = uploaded_file.name.lower()
+        if filename.endswith(".csv"):
+            df_uploaded = pd.read_csv(uploaded_file)
+        elif filename.endswith(".parquet"):
+            df_uploaded = pd.read_parquet(uploaded_file)
         else:
-            st.error("Unsupported file format. Please upload a CSV or Parquet file.")
+            st.error("Invalid file type. Upload a .csv or .parquet file.")
             st.stop()
-
-    except Exception as e:
+    except (
+        pd.errors.EmptyDataError,
+        pd.errors.ParserError,
+        ValueError,
+        OSError,
+        UnicodeDecodeError,
+    ) as e:
         st.error(f"Error reading file: {e}")
-        st.stop()
-
-    # Check required columns
-    missing_cols = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    if missing_cols:
-        st.error(
-            f"The uploaded file is missing required columns: {missing_cols}. "
-            f"Expected at least: {REQUIRED_COLUMNS}"
-        )
-        st.write("Preview of your columns:", list(df.columns))
         st.stop()
 
     st.success("File uploaded successfully ✅")
 
-    # Show basic info
-    st.subheader("Participant & Data Overview")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown(
-            f"""
-            **Participant:** {user_name}
-            **Age:** {age}
-            **Sex:** {sex}
-            """
-        )
-    with col_b:
-        st.write("Data shape:", df.shape)
-        st.write("Columns:", list(df.columns))
+    with st.expander("Preview of uploaded data"):
+        st.dataframe(df_uploaded.head())
 
-    with st.expander("Show first rows of uploaded data"):
-        st.dataframe(df.head())
+    # Simular processamento
+    with st.spinner("Processing data and running the model..."):
+        time.sleep(4)  # fake delay
 
-    # Run model
-    with st.spinner("Running model and generating report..."):
-        results = predict_activities(df)
+        # Carregar predições do JSON em vez de rodar o modelo
+        preds = load_fake_predictions()
+        df_4 = preds["walmsley_4classes"].copy()
+        df_10 = preds["willetts_10classes"].copy()
+
+    st.success("Model processed successfully ✅")
 
     # -----------------------------
     # REPORT
     # -----------------------------
+
+    # ACTIVITY DISTRIBUTION
+
     st.markdown("---")
-    st.header("Activity Prediction Report")
+    st.header("Predicted Activity Distribution")
 
-    # Summary: distribution of predicted activities
-    activity_counts = results["predicted_activity"].value_counts().rename_axis("activity").reset_index(name="count")
-    total = activity_counts["count"].sum()
-    activity_counts["percentage"] = (activity_counts["count"] / total * 100).round(1)
+    # ---- 4-class distribution ----
+    dist_4 = (
+        df_4["predicted_activity"]
+        .value_counts()
+        .rename_axis("activity")
+        .reset_index(name="count")
+    )
+    total_4 = dist_4["count"].sum()
+    dist_4["percentage"] = (dist_4["count"] / total_4 * 100).round(1)
+    dist_4["hours"] = (dist_4["count"] * WINDOW_SECONDS / 3600).round(2)
 
-    st.subheader("Predicted Activity Distribution")
-    st.dataframe(activity_counts)
+    st.subheader("4-class model (walmsley_4classes)")
+    st.dataframe(dist_4)
+    st.bar_chart(dist_4.set_index("activity")["count"], use_container_width=True)
 
-    # Simple bar chart
-    st.bar_chart(
-        data=activity_counts.set_index("activity")["count"],
-        use_container_width=True
+    # ---- 10-class distribution ----
+    dist_10 = (
+        df_10["predicted_activity"]
+        .value_counts()
+        .rename_axis("activity")
+        .reset_index(name="count")
+    )
+    total_10 = dist_10["count"].sum()
+    dist_10["percentage"] = (dist_10["count"] / total_10 * 100).round(1)
+    dist_10["hours"] = (dist_10["count"] * WINDOW_SECONDS / 3600).round(2)
+
+    st.subheader("10-class model (willets_10clases)")
+    st.dataframe(dist_10)
+    st.bar_chart(dist_10.set_index("activity")["count"], use_container_width=True)
+
+
+    main_4 = dist_4.iloc[0]
+    main_10 = dist_10.iloc[0]
+
+
+    # -----------------------------
+
+    # TIMELINE
+
+    st.markdown("---")
+    st.header("Predicted Activity Over Time")
+
+
+    # Ensure timestamps
+    df_4["timestamp"] = pd.to_datetime(df_4["timestamp"], errors="coerce")
+    df_10["timestamp"] = pd.to_datetime(df_10["timestamp"], errors="coerce")
+
+    # ---- 4-class timeline ----
+    st.subheader("Timeline – 4-class model")
+
+    df_4_sorted = df_4.dropna(subset=["timestamp"]).sort_values("timestamp").copy()
+    if not df_4_sorted.empty:
+        df_4_sorted["activity_code"] = df_4_sorted["predicted_activity"].astype("category").cat.codes
+        sample_4 = df_4_sorted.iloc[:: max(1, len(df_4_sorted) // 500)]
+        st.line_chart(sample_4.set_index("timestamp")[["activity_code"]], use_container_width=True)
+        st.caption("Encoded activity classes over time (4-class model).")
+    else:
+        st.info("No valid timestamps for 4-class model.")
+
+    # ---- 10-class timeline ----
+    st.subheader("Timeline – 10-class model")
+
+    df_10_sorted = df_10.dropna(subset=["timestamp"]).sort_values("timestamp").copy()
+    if not df_10_sorted.empty:
+        df_10_sorted["activity_code"] = df_10_sorted["predicted_activity"].astype("category").cat.codes
+        sample_10 = df_10_sorted.iloc[:: max(1, len(df_10_sorted) // 500)]
+        st.line_chart(sample_10.set_index("timestamp")[["activity_code"]], use_container_width=True)
+        st.caption("Encoded activity classes over time (10-class model).")
+    else:
+        st.info("No valid timestamps for 10-class model.")
+
+
+    # -----------------------------
+
+    # PREDICTED WINDOWS
+
+    st.markdown("---")
+    st.header("Sample of Predicted Windows (Both Models)")
+
+    df_4_sample = df_4[["timestamp", "predicted_activity"]].rename(
+        columns={"predicted_activity": "activity_4classes"}
+    )
+    df_10_sample = df_10[["timestamp", "predicted_activity"]].rename(
+        columns={"predicted_activity": "activity_10classes"}
     )
 
-    # Optional: time-series view (assuming timestamp is sortable)
-    if "timestamp" in results.columns:
-        st.subheader("Predicted Activity Over Time")
-        # Ensure timestamp is datetime
-        try:
-            results["timestamp"] = pd.to_datetime(results["timestamp"])
-            results_sorted = results.sort_values("timestamp")
-            # Show only a sample if dataset is huge
-            sample = results_sorted.iloc[:: max(1, len(results_sorted) // 500)]
+    merged = (
+        pd.merge(df_4_sample, df_10_sample, on="timestamp", how="outer")
+        .sort_values("timestamp")
+    )
 
-            st.line_chart(
-                data=sample.set_index("timestamp")[["acc_x", "acc_y", "acc_z"]],
-                use_container_width=True
-            )
+    st.dataframe(merged.head(50))
 
-            st.caption("Accelerometer signals over time (sampled).")
-        except Exception:
-            st.info("Timestamp column could not be parsed as datetime. Skipping time-series plot.")
 
-    # Optional: show a sample of predictions
-    st.subheader("Sample of Predicted Records")
-    st.dataframe(results[["timestamp", "acc_x", "acc_y", "acc_z", "predicted_activity"]].head(20))
+    # -----------------------------
 
-    # Textual summary
-    st.subheader("Summary (for Demo Day)")
-    main_activity = activity_counts.iloc[0]["activity"]
-    main_pct = activity_counts.iloc[0]["percentage"]
+    # --- SUMMARY BASED ON GUIDELINES ---
+    st.markdown("---")
+    st.header("Summary vs Health Guidelines")
+
+    # Intro
+    st.markdown(
+        f"""
+        - For **{user_name} ({age} years, {sex})**, we compared predictions from **both models**.
+        - **4-class model:** most frequent activity = **{main_4['activity']}**
+        (~**{main_4['hours']:.1f} hours**, {main_4['percentage']:.1f}% of predicted windows).
+        - **10-class model:** most frequent activity = **{main_10['activity']}**
+        (~**{main_10['hours']:.1f} hours**, {main_10['percentage']:.1f}% of predicted windows).
+        """
+    )
+
+    age_group = age
+    g = GUIDELINES[age_group]
 
     st.markdown(
         f"""
-        - For **{user_name} ({age} years, {sex})**, the model predicted **{len(results)}** activity records.
-        - The most frequent predicted activity was **{main_activity}**, representing **{main_pct}%** of the time window.
-        - You can use the charts above during the demo to discuss daily patterns, model behavior and limitations.
+        **Age group:** `{age_group}`
+        Recommended (per day):\n
+        • Sleep: **{g['sleep_min']}–{g['sleep_max']} h**\n
+        • Moderate–vigorous activity (MVPA): **≥ {g['mvpa_min']:.1f} h** (~{int(g['mvpa_min']*60)} min)\n
+        • Sedentary time (sitting/very low movement): **≤ {g['sedentary_max']} h**
         """
     )
+
+    # Use COPIES for aggregation
+    agg4 = aggregate_4class(dist_4.copy())
+    agg10 = aggregate_10class(dist_10.copy())
+
+    sleep4, sed4, mvpa4 = agg4["sleep_h"], agg4["sedentary_h"], agg4["mvpa_h"]
+    sleep10, sed10, mvpa10 = agg10["sleep_h"], agg10["sedentary_h"], agg10["mvpa_h"]
+
+    sleep4_status = classify_against_range(sleep4, g["sleep_min"], g["sleep_max"])
+    mvpa4_status  = classify_against_range(mvpa4, g["mvpa_min"], None)
+    sed4_status   = classify_against_range(sed4, None, g["sedentary_max"])
+
+    sleep10_status = classify_against_range(sleep10, g["sleep_min"], g["sleep_max"])
+    mvpa10_status  = classify_against_range(mvpa10, g["mvpa_min"], None)
+    sed10_status   = classify_against_range(sed10, None, g["sedentary_max"])
+
+    def format_status(status: str) -> str:
+        """
+        Map 'below' / 'within' / 'above' to a colored, readable label.
+        """
+        if status == "within":
+            return "🟢 within guideline"
+        if status == "below":
+            return "🟡 below guideline"
+        if status == "above":
+            return "🔴 above guideline"
+        return status
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.subheader("4-class model (walmsley_4classes)")
+        st.markdown(
+            f"""
+            - **Sleep:** ~**{sleep4:.1f} h** → {format_status(sleep4_status)}
+            - **Moderate–vigorous:** ~**{mvpa4:.1f} h** → {format_status(mvpa4_status)}
+            - **Sedentary:** ~**{sed4:.1f} h** → {format_status(sed4_status)}
+            - **Light activity:** ~**{agg4['light_h']:.1f} h**
+            """
+        )
+
+    with col_b:
+        st.subheader("10-class model (willets_10clases)")
+        st.markdown(
+            f"""
+            - **Sleep (sleep):** ~**{sleep10:.1f} h** → {format_status(sleep10_status)}
+            - **MVPA (walking/bicycling/sports/manual-work):** ~**{mvpa10:.1f} h** → {format_status(mvpa10_status)}
+            - **Sedentary (sitting/vehicle):** ~**{sed10:.1f} h** → {format_status(sed10_status)}
+            """
+        )
+
+    merged_for_agreement = merged.dropna(subset=["activity_4classes", "activity_10classes"]).copy()
+    if not merged_for_agreement.empty:
+        agree_pct = (
+            (merged_for_agreement["activity_4classes"] == merged_for_agreement["activity_10classes"])
+            .mean() * 100
+        ).round(1)
+        st.markdown(
+            f"- On overlapping windows, both models assign the **same label** in about **{agree_pct}%** of cases."
+        )
