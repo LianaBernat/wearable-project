@@ -9,34 +9,20 @@ from joblib import load
 
 from api.preprocess import load_preprocessor, preprocess_capture24
 
-# ---------------------------------------------------------
-# Label dictionaries
-# ---------------------------------------------------------
-WILLETS_LABELS = {
-    0: 'bicycling',
-    1: 'household-chores',
-    2: 'manual-work',
-    3: 'mixed-activity',
-    4: 'sitting',
-    5: 'sleep',
-    6: 'sports',
-    7: 'standing',
-    8: 'vehicle',
-    9: 'walking'
-}
-
-WALMSLEY_LABELS = {
-    0: 'light',
-    1: 'moderate-vigorous',
-    2: 'sedentary',
-    3: 'sleep'
-}
+from api.config_old import (
+    MLP_MODEL_4_PATH,
+    MLP_MODEL_10_PATH,
+    MLP_PREPROCESSOR_PATH,
+    MLP_FEATURE_NAMES_PATH,
+    WILLETS_LABELS,
+    WALMSLEY_LABELS
+)
 
 # ---------------------------------------------------------
 # API Setup
 # ---------------------------------------------------------
 app = FastAPI(
-    title="Capture-24 API",
+    title="WEARABLE-PROJECT API",
     description="API for preprocessing and activity prediction",
     version="1.0.0"
 )
@@ -44,19 +30,14 @@ app = FastAPI(
 # ---------------------------------------------------------
 # Loading artifacts
 # ---------------------------------------------------------
-MODEL_4_PATH = "api/model/mlp_baseline_4classes.keras"
-MODEL_10_PATH = "api/model/mlp_baseline_10classes.keras"
-PREPROCESSOR_PATH = "api/model/preprocessor.joblib"
-FEATURE_NAMES_PATH = "api/model/feature_names.joblib"
-
 
 print("Loading models and preprocessor...")
 
-model_4 = keras.models.load_model(MODEL_4_PATH)
-model_10 = keras.models.load_model(MODEL_10_PATH)
+model_4 = keras.models.load_model(MLP_MODEL_4_PATH)
+model_10 = keras.models.load_model(MLP_MODEL_10_PATH)
 preprocessor, feature_names = load_preprocessor(
-    PREPROCESSOR_PATH,
-    FEATURE_NAMES_PATH
+    MLP_PREPROCESSOR_PATH,
+    MLP_FEATURE_NAMES_PATH
 )
 
 print("✅ Models and preprocessor loaded.")
