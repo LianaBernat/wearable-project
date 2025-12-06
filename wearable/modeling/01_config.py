@@ -13,6 +13,24 @@ PATH = '../../data/data_processed/participants'
 FILE = 'Participants_all.parquet'
 DATAFILE = f"{PATH}/{FILE}"
 
+COLS_TO_DROP = [
+    "pid",
+    "window_start",
+    "window_end",
+    "n_samples",
+    "duration_seconds",
+    "sex",
+    "age_group",
+    "magnitude_mean",
+    "label:Walmsley2020",
+    "label:WillettsSpecific2018",
+    "label:WillettsMET2018",
+    "label:WillettsMET2018_enc",
+    "label:WillettsSpecific2018_enc",
+    "label:Walmsley2020_enc"]
+
+LABEL_CHOICE = 2   # ou 1 ou 3
+
 # -------------------------
 # Model Settings
 # -------------------------
@@ -21,8 +39,6 @@ TARGET_LABELS = {
     2: "label:WillettsSpecific2018_enc",
     3: "label:Walmsley2020_enc"
 }
-
-DEFAULT_LABEL_CHOICE = 2   # escolha automática da label sem input do usuário
 
 TEST_SIZE = 0.3
 RANDOM_STATE = 42
