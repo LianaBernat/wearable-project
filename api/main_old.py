@@ -30,21 +30,43 @@ app = FastAPI(
 # ---------------------------------------------------------
 # Loading artifacts
 # ---------------------------------------------------------
+<<<<<<< HEAD:api/main_old.py
 
 print("Loading models and preprocessor...")
 
 model_4 = keras.models.load_model(MLP_MODEL_4_PATH)
 model_10 = keras.models.load_model(MLP_MODEL_10_PATH)
+=======
+#MODEL_4_PATH = "api/model/mlp_baseline_4classes.keras"
+MODEL_10_PATH = "api/model/mlp_baseline_10classes.keras"
+PREPROCESSOR_PATH = "api/model/preprocessor.joblib"
+FEATURE_NAMES_PATH = "api/model/feature_names.joblib"
+
+MODEL_RF_PATH = "api/model/randomforest.joblib"
+
+
+print("Loading models and preprocessor...")
+
+#model_4 = keras.models.load_model(MODEL_4_PATH)
+model_10 = keras.models.load_model(MODEL_10_PATH)
+>>>>>>> master:api/main.py
 preprocessor, feature_names = load_preprocessor(
     MLP_PREPROCESSOR_PATH,
     MLP_FEATURE_NAMES_PATH
 )
+
+model_rf = load(MODEL_RF_PATH)
+
 
 print("✅ Models and preprocessor loaded.")
 
 # ---------------------------------------------------------
 # Principal Endpoint: /predict
 # ---------------------------------------------------------
+@app.get("/")
+async def main():
+    print("hello")
+
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     """
@@ -69,7 +91,7 @@ async def predict(file: UploadFile = File(...)):
     # 2. Preprocessor
     # --------------------------
     try:
-        X_ready, window_starts = preprocess_capture24(
+         X_raw, X_ready, window_starts = preprocess_capture24(
             df,
             preprocessor=preprocessor,
             feature_names=feature_names
@@ -88,9 +110,11 @@ async def predict(file: UploadFile = File(...)):
         preds_10 = model_10.predict(X_ready)
         class_10 = preds_10.argmax(axis=1)
 
+        print("model_rf")
+        print(X_raw.columns)
         # modelo de 4 classes
-        preds_4 = model_4.predict(X_ready)
-        class_4 = preds_4.argmax(axis=1)
+        preds_4 = model_rf.predict(X_raw)
+        class_4 = preds_4
 
     except Exception as e:
         return JSONResponse(

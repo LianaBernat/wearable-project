@@ -141,4 +141,4 @@ def preprocess_capture24(
     # ----------------------------------------------------------------
     X_ready = preprocessor.transform(X_raw_aligned)
 
-    return X_ready, window_starts
+    return  X_raw_df.drop(columns="magnitude_mean"), X_ready, window_starts
