@@ -17,7 +17,7 @@ Returns dictionaries with feature names and values.
 import numpy as np
 from scipy import signal
 
-from .config_old import (
+from .config import (
     SAMPLING_RATE,
     WINDOW_SIZE_SAMPLES,
 )

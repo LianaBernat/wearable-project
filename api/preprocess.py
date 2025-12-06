@@ -19,7 +19,7 @@ import pandas as pd
 from datetime import timedelta
 from joblib import load
 
-from .config_old import WINDOW_SECONDS, MIN_SAMPLES
+from .config import WINDOW_SECONDS, MIN_SAMPLES
 from .features import compute_window_features_chunked
 
 

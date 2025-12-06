@@ -1,5 +1,5 @@
 # api/main.py
-
+import io
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
@@ -7,58 +7,37 @@ from fastapi.responses import JSONResponse
 from tensorflow import keras
 from joblib import load
 
-from api.preprocess import load_preprocessor, preprocess_capture24
+from api.preprocess_chunked import load_preprocessor, preprocess_parquet_chunked
 
-# ---------------------------------------------------------
-# Label dictionaries
-# ---------------------------------------------------------
-WILLETS_LABELS = {
-    0: 'bicycling',
-    1: 'household-chores',
-    2: 'manual-work',
-    3: 'mixed-activity',
-    4: 'sitting',
-    5: 'sleep',
-    6: 'sports',
-    7: 'standing',
-    8: 'vehicle',
-    9: 'walking'
-}
-
-WALMSLEY_LABELS = {
-    0: 'light',
-    1: 'moderate-vigorous',
-    2: 'sedentary',
-    3: 'sleep'
-}
+from api.config import (
+    MODEL_RF_PATH,
+    MLP_MODEL_10_PATH,
+    MLP_PREPROCESSOR_PATH,
+    MLP_FEATURE_NAMES_PATH,
+    WILLETS_LABELS,
+    WALMSLEY_LABELS
+)
 
 # ---------------------------------------------------------
 # API Setup
 # ---------------------------------------------------------
 app = FastAPI(
-    title="Capture-24 API",
+    title="WEARABLE-PROJECT API",
     description="API for preprocessing and activity prediction",
     version="1.0.0"
 )
 
 # ---------------------------------------------------------
-# Loading artifacts
+# Loading models and preprocessor
 # ---------------------------------------------------------
-#MODEL_4_PATH = "api/model/mlp_baseline_4classes.keras"
-MODEL_10_PATH = "api/model/mlp_baseline_10classes.keras"
-PREPROCESSOR_PATH = "api/model/preprocessor.joblib"
-FEATURE_NAMES_PATH = "api/model/feature_names.joblib"
-
-MODEL_RF_PATH = "api/model/randomforest.joblib"
-
 
 print("Loading models and preprocessor...")
 
-#model_4 = keras.models.load_model(MODEL_4_PATH)
-model_10 = keras.models.load_model(MODEL_10_PATH)
+#model_4 = keras.models.load_model(MLP_MODEL_4_PATH)
+model_10 = keras.models.load_model(MLP_MODEL_10_PATH)
 preprocessor, feature_names = load_preprocessor(
-    PREPROCESSOR_PATH,
-    FEATURE_NAMES_PATH
+    MLP_PREPROCESSOR_PATH,
+    MLP_FEATURE_NAMES_PATH
 )
 
 model_rf = load(MODEL_RF_PATH)
@@ -76,32 +55,42 @@ async def main():
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     """
-    Receives a CSV with columns ['time', 'x', 'y', 'z'],
-    runs preprocessing, and returns predictions from 2 models:
-    - 4-class model (Walmsley2020)
-    - 10-class model (WillettsMET2018)
+    Receives a .parquet file with columns ['time', 'x', 'y', 'z'],
+    runs preprocessing in chunks, and returns predictions from 2 models:
+    - Random Forest for 4-class model (Walmsley2020)
+    - MLP for 10-class model (WillettsMET2018)
     """
 
     # --------------------------
-    # 1. Read CSV
+    # 1. Read parquet
     # --------------------------
-    try:
-        df = pd.read_csv(file.file)
-    except Exception as e:
+    if not file.filename.endswith(".parquet"):
         return JSONResponse(
             status_code=400,
-            content={"error": f"Error reading CSV: {str(e)}"}
+            content={"error": "O arquivo deve ser .parquet"}
         )
+
+    try:
+        raw_bytes = await file.read()
+        buffer = io.BytesIO(raw_bytes)
+    except Exception as e:
+        return JSONResponse(
+        status_code=400,
+        content={"error": f"Erro ao receber o arquivo: {e}"}
+    )
+
 
     # --------------------------
     # 2. Preprocessor
     # --------------------------
     try:
-         X_raw, X_ready, window_starts = preprocess_capture24(
-            df,
+         X_raw, X_ready, window_starts = preprocess_parquet_chunked(
+            fileobj=buffer,
             preprocessor=preprocessor,
-            feature_names=feature_names
+            feature_names=feature_names,
+            batch_size=500_000
         )
+
     except Exception as e:
         return JSONResponse(
             status_code=400,
@@ -116,8 +105,7 @@ async def predict(file: UploadFile = File(...)):
         preds_10 = model_10.predict(X_ready)
         class_10 = preds_10.argmax(axis=1)
 
-        print("model_rf")
-        print(X_raw.columns)
+        
         # modelo de 4 classes
         preds_4 = model_rf.predict(X_raw)
         class_4 = preds_4

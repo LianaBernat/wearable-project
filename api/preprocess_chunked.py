@@ -1,13 +1,10 @@
-# api/preprocess_parquet_chunked.py
-
 """
-Efficient chunked preprocessing for large Capture-24 parquet files.
+Executes the steps to transform raw accelerometer CSV data into
+standardized features ready for model prediction.
 
-This version uses PyArrow Scanner to stream through a large parquet file
-without loading the entire dataset into memory. It processes the data in
-batches, creates 5-second windows inside each batch, computes features,
-and returns arrays ready for model prediction.
-
+Functions:
+- load_preprocessor: Load the scaler and feature names.
+- preprocess_parquet_chunked: Efficient chunked preprocessing for large Capture-24 parquet files.
 Inputs:
 - .parquet file with columns: time, x, y, z
 - trained preprocessor (StandardScaler)
@@ -17,6 +14,7 @@ Outputs:
 - X_raw: pd.DataFrame with raw features
 - X_ready: np.ndarray with scaled features
 - window_starts: list of timestamps
+
 """
 
 import numpy as np
@@ -24,16 +22,31 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pandas as pd
 from datetime import timedelta
+from joblib import load
 
-from api.features import compute_window_features_chunked
-from api.config_old import WINDOW_SECONDS, MIN_SAMPLES
+from .config import WINDOW_SECONDS, MIN_SAMPLES
+from .features import compute_window_features_chunked
+
+
+# --------------------------------------------------------------------
+# 1) Load preprocessor and feature_names
+# --------------------------------------------------------------------
+def load_preprocessor(preprocessor_path="preprocessor.joblib",
+                      feature_names_path="feature_names.joblib"):
+    """
+    Load the preprocessor (StandardScaler) and the order of features.
+    """
+    preprocessor = load(preprocessor_path)
+    feature_names = load(feature_names_path)
+    return preprocessor, feature_names
+
 
 
 def preprocess_parquet_chunked(
     fileobj,
     preprocessor,
     feature_names,
-    batch_size=200_000
+    batch_size=500_000
 ):
     """
     Chunked preprocessing for parquet files using PyArrow Scanner.
@@ -52,11 +65,16 @@ def preprocess_parquet_chunked(
     batch_size : int
         Number of rows per Arrow batch (default 200k)
 
-    Returns
+   Returns
     -------
     X_ready : np.ndarray
+        Transformed features, ready for MLP model.predict().
+
     window_starts : list[datetime]
-    X_raw
+        Timestamp of the start of each window (5s).
+
+    X_raw : pd.DataFrame
+        Raw features before scaling without column magnitude_mean, ready for RF model.predict().
     """
 
     # --------------------------------------------------------------------
@@ -72,7 +90,7 @@ def preprocess_parquet_chunked(
     # --------------------------------------------------------------------
     for batch in parquet_data.iter_batches(batch_size=batch_size, columns=['time', 'x', 'y', 'z']):
 
-        df = batch.to_pandas(types_mapper=lambda t: 'float32' if pa.types.is_floating(t) else None)
+        df = batch.to_pandas()
 
         # Sanitize
         df['time'] = pd.to_datetime(df['time'], errors='coerce')
@@ -122,4 +140,4 @@ def preprocess_parquet_chunked(
     # --------------------------------------------------------------------
     X_ready = preprocessor.transform(X_aligned)
 
-    return X_ready, all_window_starts
+    return X_raw.drop(columns='magnitude_mean'), X_ready, all_window_starts
