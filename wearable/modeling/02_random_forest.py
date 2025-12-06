@@ -36,15 +36,20 @@ def compress(df, **kwargs):
 
     return df
 
-def select_target(df, label_choice:int):
+def select_target(df, label_choice=config.LABEL_CHOICE):
     """Seleciona a label target a ser usada pelo modelo (1: WillettsMET2018, 2: WillettsSpecific2018 ou 3:Walmsley2020 )"""
+    print(f"[select_target] Iniciando seleção da label target ({label_choice})...")
+
     target_col = config.TARGET_LABELS[label_choice]
+    print(f"[select_target] Target selecionada: {target_col}")
     y = df[target_col]
+    print("[select_target] Finalizado!\n")
     return y, target_col
 
 
 def prepare_X(df: pd.DataFrame):
     X = df.drop(columns=config.COLS_TO_DROP)
+    print("[prepare_X] Finalizado!\n")
     return X
 
 
@@ -68,6 +73,7 @@ def impute_missing(X_train, X_test):
     imputer = SimpleImputer(strategy="median")
     X_train_imp = pd.DataFrame(imputer.fit_transform(X_train), columns=X_train.columns)
     X_test_imp = pd.DataFrame(imputer.transform(X_test), columns=X_train.columns)
+    print("Imputed missing\n")
     return X_train_imp, X_test_imp
 
 
