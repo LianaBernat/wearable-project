@@ -10,6 +10,7 @@ from imblearn.pipeline import Pipeline
 from sklearn.model_selection import cross_val_score
 import config
 
+
 def compress(df, **kwargs):
     """
     Reduces the size of the DataFrame by downcasting numerical columns
@@ -35,6 +36,12 @@ def compress(df, **kwargs):
     print("new DataFrame size: ", round(out_size / 1024**2,2), " MB")
 
     return df
+
+def select_P043(df, pid):
+    df_P043 = df[df["pid"] == pid].copy()
+    df = df[df["pid"] != pid].copy()
+    return df_P043, df
+
 
 def select_target(df, label_choice=config.LABEL_CHOICE):
     """Seleciona a label target a ser usada pelo modelo (1: WillettsMET2018, 2: WillettsSpecific2018 ou 3:Walmsley2020 )"""
@@ -73,11 +80,12 @@ def impute_missing(X_train, X_test):
     imputer = SimpleImputer(strategy="median")
     X_train_imp = pd.DataFrame(imputer.fit_transform(X_train), columns=X_train.columns)
     X_test_imp = pd.DataFrame(imputer.transform(X_test), columns=X_train.columns)
-    print("Imputed missing\n")
+    print("Imputin missing values...\n")
     return X_train_imp, X_test_imp
 
 
 def apply_smote(X_train_imp, y_train):
+    print("Almost there. Working on some balancing...")
     sm = SMOTE(
         k_neighbors=config.SMOTE_K,
         random_state=config.RANDOM_STATE,
@@ -88,6 +96,7 @@ def apply_smote(X_train_imp, y_train):
     return X_train_res, y_train_res
 
 def train_model(X_train_res, y_train_res):
+    print("Training the model")
     rf = RandomForestClassifier(
         n_estimators=config.RF_N_ESTIMATORS,
         max_depth=config.RF_MAX_DEPTH,

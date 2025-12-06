@@ -22,6 +22,8 @@ COLS_TO_DROP = [
     "sex",
     "age_group",
     "magnitude_mean",
+    "hour_sin",
+    "hour_cos",
     "label:Walmsley2020",
     "label:WillettsSpecific2018",
     "label:WillettsMET2018",
@@ -29,7 +31,7 @@ COLS_TO_DROP = [
     "label:WillettsSpecific2018_enc",
     "label:Walmsley2020_enc"]
 
-LABEL_CHOICE = 2   # ou 1 ou 3
+LABEL_CHOICE = 3   # ou 1 ou 3
 
 # -------------------------
 # Model Settings
