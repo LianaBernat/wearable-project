@@ -7,9 +7,9 @@ from fastapi.responses import JSONResponse
 from tensorflow import keras
 from joblib import load
 
-from api.preprocess_chunked import load_preprocessor, preprocess_parquet_chunked
+from .preprocess_chunked import load_preprocessor, preprocess_parquet_chunked
 
-from api.config import (
+from .config import (
     MODEL_RF_PATH,
     MLP_MODEL_10_PATH,
     MLP_PREPROCESSOR_PATH,
@@ -50,7 +50,7 @@ print("✅ Models and preprocessor loaded.")
 # ---------------------------------------------------------
 @app.get("/")
 async def main():
-    print("hello")
+    return {'message': 'WEARABLE- PROJECT. API is running. Use the /predict endpoint to POST data.'}
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
@@ -105,7 +105,7 @@ async def predict(file: UploadFile = File(...)):
         preds_10 = model_10.predict(X_ready)
         class_10 = preds_10.argmax(axis=1)
 
-        
+
         # modelo de 4 classes
         preds_4 = model_rf.predict(X_raw)
         class_4 = preds_4
