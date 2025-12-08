@@ -1,5 +1,7 @@
 FROM python:3.10.6
 
+WORKDIR /api
+
 COPY requirements.txt .
 COPY . .
 
