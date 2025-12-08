@@ -1,0 +1,12 @@
+local_ignore/
+data/
+notebooks/
+wearable/
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+.venv/
+__pycache__/
+*.parquet
+*.csv
+*.zip
+.git/
