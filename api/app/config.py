@@ -49,24 +49,17 @@ WALMSLEY_LABELS = {
 }
 
 # -------------------------
-# INPUT PATHS
-# -------------------------
-RAW_CAPTURE24_GLOB = ".../data/data_raw/capture24/P*.csv.gz"
-METADATA_PATH = ".../data/data_raw/capture24/metadata.csv"
-ANNOTATION_DICT_PATH = ".../data/data_raw/capture24/annotation-label-dictionary.csv"
-
-# -------------------------
-# OUTPUT PATHS
-# -------------------------
-OUT_DIR = ".../data/data_processed/participants"
-PARTICIPANT_GLOB = "../data/data_raw/capture24/P*.csv.gz"
-
-# -------------------------
 # MODEL PATHS
 # -------------------------
 #MODEL_4_PATH = "api/model/mlp_baseline_4classes.keras"
-MLP_MODEL_10_PATH = "api/model/mlp_baseline_10classes.keras"
-MLP_PREPROCESSOR_PATH = "api/model/preprocessor.joblib"
-MLP_FEATURE_NAMES_PATH = "api/model/feature_names.joblib"
+MLP_MODEL_10_PATH = "app/model/mlp_baseline_10classes.keras"
+MLP_PREPROCESSOR_PATH = "app/model/preprocessor.joblib"
+MLP_FEATURE_NAMES_PATH = "app/model/feature_names.joblib"
 
-MODEL_RF_PATH = "api/model/randomforest.joblib"
+MODEL_RF_PATH = "app/model/randomforest.joblib"
+RF_FEATURE_NAMES = ['x_mean', 'x_std', 'x_min', 'x_max',
+                    'y_mean', 'y_std', 'y_min', 'y_max',
+                    'z_mean', 'z_std', 'z_min', 'z_max',
+                    'energy_x', 'energy_y', 'energy_z', 'energy_total',
+                    'corr_xy', 'corr_xz', 'corr_yz',
+                    'fft_dom_freq', 'fft_peak_power']
