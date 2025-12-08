@@ -6,6 +6,10 @@ wearable/
 **/.ipynb_checkpoints/
 .venv/
 __pycache__/
+
+*.pyc
+*.pyo
+
 *.parquet
 *.csv
 *.zip
