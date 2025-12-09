@@ -5,8 +5,11 @@ wearable/
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
 .venv/
-__pycache__/
 
+.env
+.envrc
+
+__pycache__/
 *.pyc
 *.pyo
 

@@ -24,7 +24,7 @@ import pandas as pd
 from datetime import timedelta
 from joblib import load
 
-from .config import WINDOW_SECONDS, MIN_SAMPLES
+from .config import WINDOW_SECONDS, MIN_SAMPLES, RF_FEATURE_NAMES
 from .features import compute_window_features_chunked
 
 
@@ -134,10 +134,11 @@ def preprocess_parquet_chunked(
 
     # Verified columns order
     X_aligned = X_raw[feature_names]
+    X_RF = X_raw[RF_FEATURE_NAMES]
 
     # --------------------------------------------------------------------
     # Step 6 — Apply scaler
     # --------------------------------------------------------------------
     X_ready = preprocessor.transform(X_aligned)
 
-    return X_raw.drop(columns='magnitude_mean'), X_ready, all_window_starts
+    return X_RF, X_ready, all_window_starts

@@ -6,9 +6,11 @@ uvicorn==0.38.0
 tensorflow==2.20.0
 scikit-learn==1.7.2
 joblib==1.5.2
+dill==0.4.0
 
 # === DATA PROCESSING ===
 numpy==2.2.6
 pandas==2.3.3
 pyarrow==16.1.0
 tqdm==4.67.1
+python-multipart==0.0.20
