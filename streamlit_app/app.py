@@ -1,29 +1,37 @@
+
 # streamlit_app/app.py
 """
 Streamlit app to upload accelerometer data and display predicted activities
 """
 
 
-from pathlib import Path
-import time
-
-import json
-
-import streamlit as st
-import pandas as pd
-import numpy as np
 
 # -----------------------------
-# PATHS
+# IMPORTS
+# -----------------------------
+
+from io import BytesIO
+import math
+import requests
+import plotly.express as px
+import pandas as pd
+import numpy as np
+import streamlit as st
+from pathlib import Path
+
+
+# -----------------------------
+# PATHS / CONSTANTS / GUIDELINES
 # -----------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-API_DIR = BASE_DIR / "api"  # or "api" if your folder is lowercase
-MODEL_DIR = API_DIR / "model"
-JSON_PATH = BASE_DIR / "data" / "response_1765050557889.json"
+API_URL = "https://wearable-api-1009461955584.us-central1.run.app/predict"
 
+WINDOW_SECONDS = 5          # janela do modelo (5s)
+MAX_API_BYTES = 30 * 1024 * 1024  # 30MB
 
-# --- Guidelines for summary (hours per day) ---
+REQUIRED_COLUMNS = ["time", "x", "y", "z"]
+
 
 GUIDELINES = {
     "18-29": {"sleep_min": 7, "sleep_max": 9, "mvpa_min": 0.5, "mvpa_max": 1.5, "sedentary_max": 8},
@@ -38,83 +46,96 @@ SLEEP_10 = {"sleep"}
 
 
 
-def classify_against_range(value: float, min_val: float | None, max_val: float | None) -> str:
+# -----------------------------
+# FUNCTIONS
+# -----------------------------
+
+# LOAD PREDICTIONS FROM API
+
+def call_api_with_parquet_bytes(parquet_bytes: bytes, original_name: str) -> dict:
     """
-    Simple text classification vs guideline range.
+    Chama a API para UM parquet (bytes) e retorna o JSON.
     """
-    if min_val is not None and value < min_val:
-        return "below"
-    if max_val is not None and value > max_val:
-        return "above"
-    return "within"
-
-
-# Optional: if you'll call an API instead of loading a local model
-# import requests
-
-# -----------------------------
-# CONFIG
-# -----------------------------
-st.set_page_config(
-    page_title="Wearable Activity Classifier", page_icon="⏱️", layout="wide"
-)
-
-REQUIRED_COLUMNS = ["time", "x", "y", "z"]
-WINDOW_SECONDS = 30
-
-# -----------------------------
-# Loading fake predictions for demo
-# -----------------------------
-
-
-def load_fake_predictions() -> dict:
-    """
-    Load fake predictions for both models from JSON.
-
-    Expects JSON like:
-    {
-      "willetts_10classes": [...],
-      "walmsley_4classes": [...]
+    files = {
+        "file": (original_name, parquet_bytes, "application/octet-stream")
     }
 
-    Returns dict with two DataFrames:
-      - preds["walmsley_4classes"]
-      - preds["willetts_10classes"]
+    resp = requests.post(API_URL, files=files, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def load_predictions(file_bytes: bytes, original_name: str, df_uploaded: pd.DataFrame) -> dict:
     """
-    with open(JSON_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    Se o arquivo for <=30MB, manda uma vez só.
+    Se for >30MB, divide df_uploaded em N pedaços e manda N parquet menores.
+    Junta as predições de todos os pedaços.
+    Retorna:
+      {
+        "walmsley_4classes": DataFrame,
+        "willetts_10classes": DataFrame
+      }
+    """
 
-    dfs = {}
+    total_size = len(file_bytes)
 
-    for key in ["walmsley_4classes", "willetts_10classes"]:
-        if key not in data:
-            raise ValueError(
-                f"Key '{key}' not found in JSON. Available: {list(data.keys())}"
-            )
+    if total_size <= MAX_API_BYTES:
+        # 1 Request
+        data = call_api_with_parquet_bytes(file_bytes, original_name)
+        dfs = {}
+        for key in ["willetts_10classes", "walmsley_4classes"]:
+            df = pd.DataFrame.from_dict(data[key])
+            df = df.rename(columns={"window_start": "timestamp", "label": "predicted_activity"})
+            if "label_id" in df.columns:
+                df = df.drop(columns=["label_id"])
+            dfs[key] = df
+        return dfs
 
-        records = data[key]
-        df_model = pd.DataFrame(records)
+    # MULTIPLE Requests
+    n_chunks = math.ceil(total_size / MAX_API_BYTES)
+    n_rows = len(df_uploaded)
+    rows_per_chunk = math.ceil(n_rows / n_chunks)
 
-        if "window_start" not in df_model.columns or "label" not in df_model.columns:
-            raise ValueError(
-                f"JSON list '{key}' must contain 'window_start' and 'label'."
-            )
+    all_4 = []
+    all_10 = []
 
-        df_model = df_model.rename(
-            columns={"window_start": "timestamp", "label": "predicted_activity"}
-        )
+    for i in range(n_chunks):
+        start = i * rows_per_chunk
+        end = min((i + 1) * rows_per_chunk, n_rows)
+        if start >= end:
+            continue
 
-        if "label_id" in df_model.columns:
-            df_model = df_model.drop(columns=["label_id"])
+        df_chunk = df_uploaded.iloc[start:end]
 
-        dfs[key] = df_model
+        buffer = BytesIO()
+        df_chunk.to_parquet(buffer, index=False)
+        chunk_bytes = buffer.getvalue()
 
-    return dfs
+        try:
+            data_chunk = call_api_with_parquet_bytes(chunk_bytes, f"{original_name}_part{i+1}.parquet")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error calling prediction API for chunk {i+1}/{n_chunks}: {e}")
+            st.stop()
 
-# -----------------------------
-# Aggregation functions
-# -----------------------------
+        df_10_chunk = pd.DataFrame.from_dict(data_chunk["willetts_10classes"])
+        df_4_chunk = pd.DataFrame.from_dict(data_chunk["walmsley_4classes"])
 
+        for df, lst in [(df_10_chunk, all_10), (df_4_chunk, all_4)]:
+            df = df.rename(columns={"window_start": "timestamp", "label": "predicted_activity"})
+            if "label_id" in df.columns:
+                df = df.drop(columns=["label_id"])
+            lst.append(df)
+
+    df_10_full = pd.concat(all_10, ignore_index=True)
+    df_4_full = pd.concat(all_4, ignore_index=True)
+
+    return {
+        "willetts_10classes": df_10_full,
+        "walmsley_4classes": df_4_full,
+    }
+
+
+# AGGREGATION FOR 4-CLASS FUNCTION
 def aggregate_4class(dist_4: pd.DataFrame) -> dict:
     """
     dist_4 has columns: activity, count, percentage, hours
@@ -136,6 +157,7 @@ def aggregate_4class(dist_4: pd.DataFrame) -> dict:
     }
 
 
+# AGGREGATION FOR 10-CLASS FUNCTION
 def aggregate_10class(dist_10: pd.DataFrame) -> dict:
     """
     dist_10 has columns: activity, count, percentage, hours
@@ -154,10 +176,63 @@ def aggregate_10class(dist_10: pd.DataFrame) -> dict:
     }
 
 
+# CLASSIFY AGAINST GUIDELINE RANGE
+def classify_against_range(value: float, min_val: float | None, max_val: float | None) -> str:
+    """
+    Simple text classification vs guideline range.
+    """
+    if min_val is not None and value < min_val:
+        return "below"
+    if max_val is not None and value > max_val:
+        return "above"
+    return "within"
+
+
+# AGGREGATE TO MINUTES FUNCTION
+def aggregate_to_minutes(df: pd.DataFrame, label_col: str = "predicted_activity") -> pd.DataFrame:
+    """
+    Agrupa janelas (ex: 5s) por minuto, escolhendo o rótulo mais frequente.
+    Retorna colunas:
+      - minute (datetime floored to minute)
+      - predicted_activity
+      - n_windows (quantas janelas naquele minuto)
+    """
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"])
+
+    df["minute"] = df["timestamp"].dt.floor("min")
+
+    def most_frequent(x):
+        return x.value_counts().idxmax()
+
+    grouped = (
+        df.groupby("minute")[label_col]
+        .agg(most_frequent)
+        .reset_index()
+        .rename(columns={label_col: "predicted_activity"})
+    )
+
+    # quantas janelas por minuto (pode ser útil)
+    counts = (
+        df.groupby("minute")[label_col]
+        .size()
+        .rename("n_windows")
+        .reset_index()
+    )
+
+    result = pd.merge(grouped, counts, on="minute", how="left")
+    return result
+
+
 
 # -----------------------------
-# UI LAYOUT
+# CONFIG AND UI LAYOUT
 # -----------------------------
+
+st.set_page_config(
+    page_title="Wearable Activity Classifier", page_icon="⏱️", layout="wide"
+)
 
 st.title("Wearable Activity Classifier – Demo")
 st.write(
@@ -167,7 +242,8 @@ st.write(
 
 st.markdown("---")
 
-# ----- USER INFO FORM -----
+
+# USER INPUT FORM
 with st.form("user_form"):
     col1, col2, col3 = st.columns(3)
 
@@ -178,51 +254,34 @@ with st.form("user_form"):
     with col3:
         sex = st.selectbox("Sex", options=["Male", "Female"])
 
-    # Mapear label -> chave no JSON
-    model_choice_map = {
-        "4-class model (walmsley_4classes)": "walmsley_4classes",
-        "10-class model (willetts_10classes)": "willetts_10classes",
-    }
-
     st.markdown("### Upload accelerometer data")
     uploaded_file = st.file_uploader(
-        "CSV or Parquet file (accelerometer data)", type=["csv", "parquet"]
+        "Parquet file (accelerometer data)", type=["parquet"]
     )
 
     submitted = st.form_submit_button("Run analysis")
 
+files = {"file": ("P043_no_annotations_small.parquet", uploaded_file)}
+response = requests.post(API_URL, files=files)
 
-# -----------------------------
-# WHEN USER SUBMITS
-# -----------------------------
 
+#AFTER SUBISSION
 if submitted:
     if not user_name:
         st.error("Please enter a name.")
         st.stop()
 
     if uploaded_file is None:
-        st.error("Please upload a file (.csv or .parquet).")
+        st.error("Please upload a .parquet file.")
         st.stop()
 
-    # Ler o arquivo só para "validar" (não será usado na predição)
+    file_bytes = uploaded_file.getvalue()
+
+    # Usa BytesIO para ler parquet sem “estragar” os bytes que vão pra API
     try:
-        filename = uploaded_file.name.lower()
-        if filename.endswith(".csv"):
-            df_uploaded = pd.read_csv(uploaded_file)
-        elif filename.endswith(".parquet"):
-            df_uploaded = pd.read_parquet(uploaded_file)
-        else:
-            st.error("Invalid file type. Upload a .csv or .parquet file.")
-            st.stop()
-    except (
-        pd.errors.EmptyDataError,
-        pd.errors.ParserError,
-        ValueError,
-        OSError,
-        UnicodeDecodeError,
-    ) as e:
-        st.error(f"Error reading file: {e}")
+        df_uploaded = pd.read_parquet(BytesIO(file_bytes))
+    except Exception as e:
+        st.error(f"Error reading parquet file: {e}")
         st.stop()
 
     st.success("File uploaded successfully ✅")
@@ -230,23 +289,23 @@ if submitted:
     with st.expander("Preview of uploaded data"):
         st.dataframe(df_uploaded.head())
 
-    # Simular processamento
+    # Chama API (com chunking se precisar)
     with st.spinner("Processing data and running the model..."):
-        time.sleep(4)  # fake delay
-
-        # Carregar predições do JSON em vez de rodar o modelo
-        preds = load_fake_predictions()
+        preds = load_predictions(file_bytes, uploaded_file.name, df_uploaded)
         df_4 = preds["walmsley_4classes"].copy()
         df_10 = preds["willetts_10classes"].copy()
 
+
     st.success("Model processed successfully ✅")
+
+    df_4_min = aggregate_to_minutes(df_4)
+    df_10_min = aggregate_to_minutes(df_10)
 
     # -----------------------------
     # REPORT
     # -----------------------------
 
     # ACTIVITY DISTRIBUTION
-
     st.markdown("---")
     st.header("Predicted Activity Distribution")
 
@@ -257,13 +316,14 @@ if submitted:
         .rename_axis("activity")
         .reset_index(name="count")
     )
-    total_4 = dist_4["count"].sum()
-    dist_4["percentage"] = (dist_4["count"] / total_4 * 100).round(1)
-    dist_4["hours"] = (dist_4["count"] * WINDOW_SECONDS / 3600).round(2)
+    dist_4["duration_sec"] = dist_4["count"] * WINDOW_SECONDS
+    total_sec_4 = dist_4["duration_sec"].sum()
+    dist_4["hours"] = (dist_4["duration_sec"] / 3600).round(2)
+    dist_4["percentage"] = (dist_4["duration_sec"] / total_sec_4 * 100).round(1)
 
     st.subheader("4-class model (walmsley_4classes)")
     st.dataframe(dist_4)
-    st.bar_chart(dist_4.set_index("activity")["count"], use_container_width=True)
+    st.bar_chart(dist_4.set_index("activity")["duration_sec"], use_container_width=True)
 
     # ---- 10-class distribution ----
     dist_10 = (
@@ -272,83 +332,94 @@ if submitted:
         .rename_axis("activity")
         .reset_index(name="count")
     )
-    total_10 = dist_10["count"].sum()
-    dist_10["percentage"] = (dist_10["count"] / total_10 * 100).round(1)
-    dist_10["hours"] = (dist_10["count"] * WINDOW_SECONDS / 3600).round(2)
+    dist_10["duration_sec"] = dist_10["count"] * WINDOW_SECONDS
+    total_sec_10 = dist_10["duration_sec"].sum()
+    dist_10["hours"] = (dist_10["duration_sec"] / 3600).round(2)
+    dist_10["percentage"] = (dist_10["duration_sec"] / total_sec_10 * 100).round(1)
 
-    st.subheader("10-class model (willets_10clases)")
+    st.subheader("10-class model (willetts_10classes)")
     st.dataframe(dist_10)
-    st.bar_chart(dist_10.set_index("activity")["count"], use_container_width=True)
-
+    st.bar_chart(dist_10.set_index("activity")["duration_sec"], use_container_width=True)
 
     main_4 = dist_4.iloc[0]
     main_10 = dist_10.iloc[0]
 
 
-    # -----------------------------
-
     # TIMELINE
-
     st.markdown("---")
-    st.header("Predicted Activity Over Time")
+    st.header("Activity Timeline (Gantt-style)")
 
+    # 4-class Gantt
+    st.subheader("4-class model (walmsley_4classes)")
+    if not df_4_min.empty:
+        df_4_gantt = df_4_min.copy()
+        df_4_gantt["start"] = df_4_gantt["minute"]
+        df_4_gantt["end"] = df_4_gantt["minute"] + pd.Timedelta(minutes=1)
+        df_4_gantt["track"] = "4-class"
 
-    # Ensure timestamps
-    df_4["timestamp"] = pd.to_datetime(df_4["timestamp"], errors="coerce")
-    df_10["timestamp"] = pd.to_datetime(df_10["timestamp"], errors="coerce")
-
-    # ---- 4-class timeline ----
-    st.subheader("Timeline – 4-class model")
-
-    df_4_sorted = df_4.dropna(subset=["timestamp"]).sort_values("timestamp").copy()
-    if not df_4_sorted.empty:
-        df_4_sorted["activity_code"] = df_4_sorted["predicted_activity"].astype("category").cat.codes
-        sample_4 = df_4_sorted.iloc[:: max(1, len(df_4_sorted) // 500)]
-        st.line_chart(sample_4.set_index("timestamp")[["activity_code"]], use_container_width=True)
-        st.caption("Encoded activity classes over time (4-class model).")
+        fig4 = px.timeline(
+            df_4_gantt,
+            x_start="start",
+            x_end="end",
+            y="track",
+            color="predicted_activity",
+            hover_data=["n_windows"],
+        )
+        fig4.update_yaxes(title=None, showticklabels=False)
+        fig4.update_layout(showlegend=True, height=250)
+        st.plotly_chart(fig4, use_container_width=True)
     else:
-        st.info("No valid timestamps for 4-class model.")
+        st.info("No valid data for 4-class timeline.")
 
-    # ---- 10-class timeline ----
-    st.subheader("Timeline – 10-class model")
+    # 10-class Gantt
+    st.subheader("10-class model (willetts_10classes)")
+    if not df_10_min.empty:
+        df_10_gantt = df_10_min.copy()
+        df_10_gantt["start"] = df_10_gantt["minute"]
+        df_10_gantt["end"] = df_10_gantt["minute"] + pd.Timedelta(minutes=1)
+        df_10_gantt["track"] = "10-class"
 
-    df_10_sorted = df_10.dropna(subset=["timestamp"]).sort_values("timestamp").copy()
-    if not df_10_sorted.empty:
-        df_10_sorted["activity_code"] = df_10_sorted["predicted_activity"].astype("category").cat.codes
-        sample_10 = df_10_sorted.iloc[:: max(1, len(df_10_sorted) // 500)]
-        st.line_chart(sample_10.set_index("timestamp")[["activity_code"]], use_container_width=True)
-        st.caption("Encoded activity classes over time (10-class model).")
+        fig10 = px.timeline(
+            df_10_gantt,
+            x_start="start",
+            x_end="end",
+            y="track",
+            color="predicted_activity",
+            hover_data=["n_windows"],
+        )
+        fig10.update_yaxes(title=None, showticklabels=False)
+        fig10.update_layout(showlegend=True, height=250)
+        st.plotly_chart(fig10, use_container_width=True)
     else:
-        st.info("No valid timestamps for 10-class model.")
+        st.info("No valid data for 10-class timeline.")
 
 
-    # -----------------------------
 
     # PREDICTED WINDOWS
-
     st.markdown("---")
-    st.header("Sample of Predicted Windows (Both Models)")
+    st.header("Sample of Predicted Windows (Grouped by Minute)")
 
-    df_4_sample = df_4[["timestamp", "predicted_activity"]].rename(
+
+    df_4_min_ren = df_4_min[["minute", "predicted_activity"]].rename(
         columns={"predicted_activity": "activity_4classes"}
     )
-    df_10_sample = df_10[["timestamp", "predicted_activity"]].rename(
+    df_10_min_ren = df_10_min[["minute", "predicted_activity"]].rename(
         columns={"predicted_activity": "activity_10classes"}
     )
 
-    merged = (
-        pd.merge(df_4_sample, df_10_sample, on="timestamp", how="outer")
-        .sort_values("timestamp")
+    merged_minute = (
+        pd.merge(df_4_min_ren, df_10_min_ren, on="minute", how="outer")
+        .sort_values("minute")
     )
 
-    st.dataframe(merged.head(50))
+    st.dataframe(merged_minute.head(50))
 
 
-    # -----------------------------
 
-    # --- SUMMARY BASED ON GUIDELINES ---
+    # SUMMARY BASED ON GUIDELINES
     st.markdown("---")
     st.header("Summary vs Health Guidelines")
+
 
     # Intro
     st.markdown(
@@ -366,7 +437,7 @@ if submitted:
 
     st.markdown(
         f"""
-        **Age group:** `{age_group}`
+        **Age group:** '{age_group}'\n
         Recommended (per day):\n
         • Sleep: **{g['sleep_min']}–{g['sleep_max']} h**\n
         • Moderate–vigorous activity (MVPA): **≥ {g['mvpa_min']:.1f} h** (~{int(g['mvpa_min']*60)} min)\n
@@ -415,7 +486,7 @@ if submitted:
         )
 
     with col_b:
-        st.subheader("10-class model (willets_10clases)")
+        st.subheader("10-class model (willetts_10clases)")
         st.markdown(
             f"""
             - **Sleep (sleep):** ~**{sleep10:.1f} h** → {format_status(sleep10_status)}
@@ -424,7 +495,7 @@ if submitted:
             """
         )
 
-    merged_for_agreement = merged.dropna(subset=["activity_4classes", "activity_10classes"]).copy()
+    merged_for_agreement = merged_minute.dropna(subset=["activity_4classes", "activity_10classes"]).copy()
     if not merged_for_agreement.empty:
         agree_pct = (
             (merged_for_agreement["activity_4classes"] == merged_for_agreement["activity_10classes"])
