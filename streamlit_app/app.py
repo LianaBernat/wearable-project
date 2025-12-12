@@ -26,7 +26,6 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 API_URL = "https://wearable-api-1009461955584.us-central1.run.app/predict"
-
 WINDOW_SECONDS = 5          # janela do modelo (5s)
 MAX_API_BYTES = 30 * 1024 * 1024  # 30MB
 
@@ -198,7 +197,20 @@ def aggregate_to_minutes(df: pd.DataFrame, label_col: str = "predicted_activity"
       - n_windows (quantas janelas naquele minuto)
     """
     df = df.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    ts = (
+        df["timestamp"].astype(str)
+        .str.strip()
+        .str.replace("T", " ", regex=False)
+        .str.replace("Z", "", regex=False)
+        .str.replace(r"[^\x00-\x7F]", "", regex=True)   # remove unicode invisível
+        )
+
+    df["timestamp"] = pd.to_datetime(
+        ts,
+        errors="coerce",
+        format="mixed"    # pandas ≥ 2.0 aceita múltiplos formatos
+        )
+
     df = df.dropna(subset=["timestamp"])
 
     df["minute"] = df["timestamp"].dt.floor("min")
@@ -223,6 +235,58 @@ def aggregate_to_minutes(df: pd.DataFrame, label_col: str = "predicted_activity"
 
     result = pd.merge(grouped, counts, on="minute", how="left")
     return result
+
+
+# AGGREGATE TO SEGMENST
+def compress_activity_segments(df_min: pd.DataFrame) -> pd.DataFrame:
+    """
+    Comprime minutos consecutivos com a mesma atividade em segmentos contínuos.
+
+    Espera colunas:
+        - minute (datetime)
+        - predicted_activity (str)
+        - n_windows (opcional)
+
+    Retorna um DataFrame com colunas:
+        - start
+        - end
+        - predicted_activity
+        - n_windows_sum (se existir no df_min)
+    """
+
+    # ordena e trabalha em cópia
+    df = df_min.sort_values("minute").reset_index(drop=True).copy()
+
+    # colunas auxiliares
+    df["prev_minute"] = df["minute"].shift(1)
+    df["prev_label"] = df["predicted_activity"].shift(1)
+
+    # quebra de segmento (label diferente ou minuto não-contíguo)
+    df["break"] = (df["predicted_activity"] != df["prev_label"]) | (
+        (df["minute"] - df["prev_minute"]) != pd.Timedelta(minutes=1)
+    )
+
+    # segment_id incremental
+    df["segment_id"] = df["break"].cumsum()
+
+    # montar agregações
+    agg_dict = {
+        "start": ("minute", "first"),
+        "end": ("minute", "last"),
+        "predicted_activity": ("predicted_activity", "first"),
+    }
+
+    # se existir n_windows, incluir soma
+    if "n_windows" in df.columns:
+        agg_dict["n_windows_sum"] = ("n_windows", "sum")
+
+    # agregação de segmentos
+    segments = df.groupby("segment_id").agg(**agg_dict).reset_index(drop=True)
+
+    # ajustar end para ser exclusivo (Plotly espera intervalo aberto no fim)
+    segments["end"] = segments["end"] + pd.Timedelta(minutes=1)
+
+    return segments
 
 
 
@@ -261,11 +325,8 @@ with st.form("user_form"):
 
     submitted = st.form_submit_button("Run analysis")
 
-files = {"file": ("P043_no_annotations_small.parquet", uploaded_file)}
-response = requests.post(API_URL, files=files)
 
-
-#AFTER SUBISSION
+#AFTER SUBIMISSION
 if submitted:
     if not user_name:
         st.error("Please enter a name.")
@@ -295,11 +356,13 @@ if submitted:
         df_4 = preds["walmsley_4classes"].copy()
         df_10 = preds["willetts_10classes"].copy()
 
-
     st.success("Model processed successfully ✅")
 
     df_4_min = aggregate_to_minutes(df_4)
     df_10_min = aggregate_to_minutes(df_10)
+
+    #segments_4 = compress_activity_segments(df_4_min)
+    #segments_10 = compress_activity_segments(df_10_min)
 
     # -----------------------------
     # REPORT
@@ -368,8 +431,10 @@ if submitted:
         fig4.update_yaxes(title=None, showticklabels=False)
         fig4.update_layout(showlegend=True, height=250)
         st.plotly_chart(fig4, use_container_width=True)
+
     else:
         st.info("No valid data for 4-class timeline.")
+
 
     # 10-class Gantt
     st.subheader("10-class model (willetts_10classes)")
@@ -387,13 +452,13 @@ if submitted:
             color="predicted_activity",
             hover_data=["n_windows"],
         )
+
         fig10.update_yaxes(title=None, showticklabels=False)
         fig10.update_layout(showlegend=True, height=250)
         st.plotly_chart(fig10, use_container_width=True)
+
     else:
         st.info("No valid data for 10-class timeline.")
-
-
 
     # PREDICTED WINDOWS
     st.markdown("---")
