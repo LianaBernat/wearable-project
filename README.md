@@ -53,7 +53,7 @@ We experimented with several models, including XGBoost, SVC, MLP, and Random For
 The best-performing model was selected for each labeling category, as follows:
 
 **Random Forest**
-* Activity Intensity (4 classes - Walmsley2020) ➡  it classifies the movement according to its´ intensity:
+* Activity Intensity (4 classes - Walmsley2020):  it classifies the movement according to its´ intensity:
 
 1. Sleep
 2. SedentaRy
@@ -62,7 +62,7 @@ The best-performing model was selected for each labeling category, as follows:
 
 
 **MLP**
-* Specific Activity (10-class model: WillettsSpecific2018) ➡T his model classifies the model in 10 moviments:
+* Specific Activity (10-class model: WillettsSpecific2018): this model classifies the model in 10 moviments:
 1. Bicycling
 2. Household chores
 3. Manual work
