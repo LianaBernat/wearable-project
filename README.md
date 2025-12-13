@@ -9,7 +9,6 @@ Recognition. University of Oxford, 2021.)
 *Main objective:* To automatically recognize activities from smartwatch data, removing the need for manual user input.
 
 ### Background
----
 This was the final project for the Data Science and AI bootcam from Le Wagon Brasil.
 It was developed by:
 
@@ -20,12 +19,10 @@ It was developed by:
 [Renata Grassi](https://github.com/RenataGrassi)
 
 ### Data Analysis
----
 We aimed to use as many features as possible while keeping the model as generalistic as possible. Therefore, our data analysis focused on evaluating correlations only among numerical features, such as sensor-based measurements (e.g., gravity-related signals) and time-related variables (e.g., hours).
 
 ### Data Preparation
----
- -Applied time-based windowing with 5-second non-overlapping windows
+- Applied time-based windowing with 5-second non-overlapping windows
 - Removed samples with missing time or accelerometer values (x, y, z)
 - Discarded windows with fewer than 250 samples
 - Discarded windows where ≥ 50% of annotations were missing
@@ -42,13 +39,11 @@ We aimed to use as many features as possible while keeping the model as generali
 - Saved processed data as chunked Parquet files per participant
 
 ### Feature engineering
----
 'x_mean', 'x_std', 'x_min', 'x_max', 'y_mean', 'y_std', 'y_min', 'y_max',                'z_mean', 'z_std', 'z_min', 'z_max','energy_x', 'energy_y', 'energy_z', 'energy_total',
 'corr_xy', 'corr_xz', 'corr_yz','fft_dom_freq', 'fft_peak_power'
 
 
 ### Models
----
 We experimented with several models, including XGBoost, SVC, MLP, and Random Forest.
 The best-performing model was selected for each labeling category, as follows:
 
@@ -75,13 +70,11 @@ The best-performing model was selected for each labeling category, as follows:
 10. Walking
 
 ### Input and Output
----
 **Input**: CSV files containing wearable sensor data (e.g., accelerometer x, y, z)
 
 **Output**: Predicted activity labels
 
 ### URL base
----
 The deploy was made with Streamlit and it is  available [here](https://wearableactivityrecognition.streamlit.app/).
 
 ### Future Improvements
