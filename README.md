@@ -77,6 +77,7 @@ The best-performing model was selected for each labeling category, as follows:
 ### Input and Output
 ---
 **Input**: CSV files containing wearable sensor data (e.g., accelerometer x, y, z)
+
 **Output**: Predicted activity labels
 
 ### URL base
