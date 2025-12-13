@@ -12,8 +12,11 @@ Recognition. University of Oxford, 2021.)
 ---
 This was the final project for the Data Science and AI bootcam from Le Wagon Brasil.
 It was developed by:
+
 [Liana Bernat](https://github.com/LianaBernat) (creator)
+
 [Renan Pereira](https://github.com/santossrenan)
+
 [Renata Grassi](https://github.com/RenataGrassi)
 
 ### Data Analysis
