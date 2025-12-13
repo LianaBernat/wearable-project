@@ -18,6 +18,8 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 from pathlib import Path
+import time
+import plotly.graph_objects as go
 
 
 # -----------------------------
@@ -237,57 +239,101 @@ def aggregate_to_minutes(df: pd.DataFrame, label_col: str = "predicted_activity"
     return result
 
 
-# AGGREGATE TO SEGMENST
-def compress_activity_segments(df_min: pd.DataFrame) -> pd.DataFrame:
+# RADIAL TIME PLOT FUNCTION
+def make_radial_time_plot(df: pd.DataFrame, title: str = "Radial Time Plot"):
     """
-    Comprime minutos consecutivos com a mesma atividade em segmentos contínuos.
-
-    Espera colunas:
-        - minute (datetime)
-        - predicted_activity (str)
-        - n_windows (opcional)
-
-    Retorna um DataFrame com colunas:
-        - start
-        - end
-        - predicted_activity
-        - n_windows_sum (se existir no df_min)
+    Expects df with:
+      - "minute" (datetime-like)
+      - "predicted_activity" (str)
     """
 
-    # ordena e trabalha em cópia
-    df = df_min.sort_values("minute").reset_index(drop=True).copy()
+    if df is None or df.empty:
+        return None
 
-    # colunas auxiliares
-    df["prev_minute"] = df["minute"].shift(1)
-    df["prev_label"] = df["predicted_activity"].shift(1)
+    df = df.copy()
 
-    # quebra de segmento (label diferente ou minuto não-contíguo)
-    df["break"] = (df["predicted_activity"] != df["prev_label"]) | (
-        (df["minute"] - df["prev_minute"]) != pd.Timedelta(minutes=1)
+    if "minute" not in df.columns or "predicted_activity" not in df.columns:
+        raise ValueError("Radial plot requires columns: 'minute' and 'predicted_activity'")
+
+    df["minute"] = pd.to_datetime(df["minute"], errors="coerce")
+    df = df.dropna(subset=["minute", "predicted_activity"])
+
+    if df.empty:
+        return None
+
+    # minute of day (0–1439)
+    df["minute_of_day"] = df["minute"].dt.hour * 60 + df["minute"].dt.minute
+
+    # angle in degrees (0–360)
+    df["angle_deg"] = df["minute_of_day"] / 1440 * 360
+
+    # fixed radius (circle)
+    df["radius"] = 1
+
+    # color palette (stable mapping)
+    base_colors = px.colors.qualitative.Set3
+    categories = sorted(df["predicted_activity"].astype(str).unique())
+    color_map = {cat: base_colors[i % len(base_colors)] for i, cat in enumerate(categories)}
+
+    fig = go.Figure()
+
+    for cat in categories:
+        df_cat = df[df["predicted_activity"] == cat]
+
+        fig.add_trace(
+            go.Scatterpolar(
+                r=df_cat["radius"],
+                theta=df_cat["angle_deg"],
+                mode="markers",
+                marker=dict(size=7, color=color_map[cat], opacity=0.9),
+                name=cat,
+            )
+        )
+
+    # Add hour ticks like a clock (optional but recommended)
+    hour_ticks = list(range(0, 24, 3))  # 0,3,6,...,21
+    tick_vals = [h / 24 * 360 for h in hour_ticks]
+    tick_text = [f"{h:02d}:00" for h in hour_ticks]
+
+    fig.update_layout(
+        title=title,
+        polar=dict(
+            radialaxis=dict(visible=False, range=[0, 1.2]),
+            angularaxis=dict(
+                direction="clockwise",
+                rotation=90,  # 0° at top (12 o'clock)
+                tickmode="array",
+                tickvals=tick_vals,
+                ticktext=tick_text,
+            ),
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
+        height=520,
+        margin=dict(l=20, r=20, t=60, b=60),
     )
 
-    # segment_id incremental
-    df["segment_id"] = df["break"].cumsum()
+    return fig
 
-    # montar agregações
-    agg_dict = {
-        "start": ("minute", "first"),
-        "end": ("minute", "last"),
-        "predicted_activity": ("predicted_activity", "first"),
-    }
 
-    # se existir n_windows, incluir soma
-    if "n_windows" in df.columns:
-        agg_dict["n_windows_sum"] = ("n_windows", "sum")
+# BUILD RECOMMENDATIONS FUNCTION
+def build_recommendations(sleep_status, mvpa_status, sedentary_status):
+    recommendations = []
 
-    # agregação de segmentos
-    segments = df.groupby("segment_id").agg(**agg_dict).reset_index(drop=True)
+    if sleep_status == "below":
+        recommendations.append("🛌 You should aim to **sleep more**, as your estimated sleep time is below the recommended range.")
+    elif sleep_status == "above":
+        recommendations.append("🛌 Your sleep duration is **above the typical recommendation**. If you still feel tired, sleep quality might be worth investigating.")
 
-    # ajustar end para ser exclusivo (Plotly espera intervalo aberto no fim)
-    segments["end"] = segments["end"] + pd.Timedelta(minutes=1)
+    if mvpa_status == "below":
+        recommendations.append("🏃 You should try to be **more physically active**, increasing moderate to vigorous activities such as walking, cycling, or sports.")
 
-    return segments
+    if sedentary_status == "above":
+        recommendations.append("🪑 You should aim to **reduce sedentary time**, especially prolonged sitting, by taking regular movement breaks.")
 
+    if not recommendations:
+        recommendations.append("✅ Your activity patterns are **well aligned with current health guidelines**. Keep up the good habits!")
+
+    return recommendations
 
 
 # -----------------------------
@@ -298,7 +344,7 @@ st.set_page_config(
     page_title="Wearable Activity Classifier", page_icon="⏱️", layout="wide"
 )
 
-st.title("Wearable Activity Classifier – Demo")
+st.title("Wearable Activity Recognition")
 st.write(
     "Upload accelerometer data from a wearable device and preview the predicted activities "
     "using our machine learning model."
@@ -326,7 +372,7 @@ with st.form("user_form"):
     submitted = st.form_submit_button("Run analysis")
 
 
-#AFTER SUBIMISSION
+#AFTER SUBMISSION
 if submitted:
     if not user_name:
         st.error("Please enter a name.")
@@ -346,20 +392,43 @@ if submitted:
         st.stop()
 
     st.success("File uploaded successfully ✅")
+    st.write(f"Uploaded file: **{uploaded_file.name}** ({len(file_bytes) / 1024:.2f} KB)")
+    st.write(f"DataFrame shape: **{df_uploaded.shape[0]} rows x {df_uploaded.shape[1]} columns**")
 
     with st.expander("Preview of uploaded data"):
         st.dataframe(df_uploaded.head())
 
     # Chama API (com chunking se precisar)
-    with st.spinner("Processing data and running the model..."):
+    with st.status("Running activity recognition pipeline...", expanded=True) as status:
+
+        st.write("📥 File received and validated")
+        time.sleep(1)
+
+        st.write("✂️ Splitting data into chunks")
+        time.sleep(3)
+
+        st.write("🧹 Performing feature engineering")
+        time.sleep(5)
+
+        st.write("🌲 Applying Random Forest model (4-classes)")
+        time.sleep(10)
+
+        st.write("🧠 Applying Deep Learning model (10-classes)")
+        time.sleep(10)
+
+        st.write("📡 Sending data to prediction API")
         preds = load_predictions(file_bytes, uploaded_file.name, df_uploaded)
+
+        st.write("📊 Aggregating predictions and preparing report")
+        time.sleep(10)
+
+        status.update(label="✅ Processing completed", state="complete")
+
         df_4 = preds["walmsley_4classes"].copy()
         df_10 = preds["willetts_10classes"].copy()
 
-    st.success("Model processed successfully ✅")
-
-    df_4_min = aggregate_to_minutes(df_4)
-    df_10_min = aggregate_to_minutes(df_10)
+        df_4_min = aggregate_to_minutes(df_4)
+        df_10_min = aggregate_to_minutes(df_10)
 
     #segments_4 = compress_activity_segments(df_4_min)
     #segments_10 = compress_activity_segments(df_10_min)
@@ -384,7 +453,7 @@ if submitted:
     dist_4["hours"] = (dist_4["duration_sec"] / 3600).round(2)
     dist_4["percentage"] = (dist_4["duration_sec"] / total_sec_4 * 100).round(1)
 
-    st.subheader("4-class model (walmsley_4classes)")
+    st.subheader("Activity Intensity (4 classes - Walmsley2020)")
     st.dataframe(dist_4)
     st.bar_chart(dist_4.set_index("activity")["duration_sec"], use_container_width=True)
 
@@ -400,7 +469,7 @@ if submitted:
     dist_10["hours"] = (dist_10["duration_sec"] / 3600).round(2)
     dist_10["percentage"] = (dist_10["duration_sec"] / total_sec_10 * 100).round(1)
 
-    st.subheader("10-class model (willetts_10classes)")
+    st.subheader("Specific Activity (10 classes - WillettsSpecific2018)")
     st.dataframe(dist_10)
     st.bar_chart(dist_10.set_index("activity")["duration_sec"], use_container_width=True)
 
@@ -413,7 +482,7 @@ if submitted:
     st.header("Activity Timeline (Gantt-style)")
 
     # 4-class Gantt
-    st.subheader("4-class model (walmsley_4classes)")
+    st.subheader("Activity Intensity (4 classes - Walmsley2020)")
     if not df_4_min.empty:
         df_4_gantt = df_4_min.copy()
         df_4_gantt["start"] = df_4_gantt["minute"]
@@ -437,7 +506,7 @@ if submitted:
 
 
     # 10-class Gantt
-    st.subheader("10-class model (willetts_10classes)")
+    st.subheader("Specific Activity (10 classes - WillettsSpecific2018)")
     if not df_10_min.empty:
         df_10_gantt = df_10_min.copy()
         df_10_gantt["start"] = df_10_gantt["minute"]
@@ -460,16 +529,40 @@ if submitted:
     else:
         st.info("No valid data for 10-class timeline.")
 
+
+    # RADIAL ACTIVITY VIEW
+    st.markdown("---")
+    st.header("Radial Activity View (Clock-style)")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.subheader("4-class model")
+        fig4 = make_radial_time_plot(df_4_min[["minute", "predicted_activity"]], title="4-class (per minute)")
+        if fig4 is None:
+            st.info("No data to plot.")
+        else:
+            st.plotly_chart(fig4, use_container_width=True)
+
+    with col_b:
+        st.subheader("10-class model")
+        fig10 = make_radial_time_plot(df_10_min[["minute", "predicted_activity"]], title="10-class (per minute)")
+        if fig10 is None:
+            st.info("No data to plot.")
+        else:
+            st.plotly_chart(fig10, use_container_width=True)
+
+
     # PREDICTED WINDOWS
     st.markdown("---")
     st.header("Sample of Predicted Windows (Grouped by Minute)")
 
 
     df_4_min_ren = df_4_min[["minute", "predicted_activity"]].rename(
-        columns={"predicted_activity": "activity_4classes"}
+        columns={"predicted_activity": "Activity Intensity (4 classes)"}
     )
     df_10_min_ren = df_10_min[["minute", "predicted_activity"]].rename(
-        columns={"predicted_activity": "activity_10classes"}
+        columns={"predicted_activity": "Activity Specific (10 classes)"}
     )
 
     merged_minute = (
@@ -502,13 +595,16 @@ if submitted:
 
     st.markdown(
         f"""
-        **Age group:** '{age_group}'\n
-        Recommended (per day):\n
-        • Sleep: **{g['sleep_min']}–{g['sleep_max']} h**\n
-        • Moderate–vigorous activity (MVPA): **≥ {g['mvpa_min']:.1f} h** (~{int(g['mvpa_min']*60)} min)\n
-        • Sedentary time (sitting/very low movement): **≤ {g['sedentary_max']} h**
-        """
+    ### 🧭 Daily Recommendations
+
+    **Age group:** `{age_group}`
+
+    - **Sleep:** **{g['sleep_min']}–{g['sleep_max']} h**
+    - **Moderate–vigorous activity (MVPA):** **≥ {g['mvpa_min']:.1f} h** (~{int(g['mvpa_min'] * 60)} min)
+    - **Sedentary time (sitting / very low movement):** **≤ {g['sedentary_max']} h**
+    """
     )
+
 
     # Use COPIES for aggregation
     agg4 = aggregate_4class(dist_4.copy())
@@ -539,33 +635,115 @@ if submitted:
 
     col_a, col_b = st.columns(2)
 
+    # ---- 4-class model table ----
+    df_summary_4 = pd.DataFrame(
+        [
+            {
+                "Metric": "Sleep",
+                "Hours (h)": f"{sleep4:.1f}",
+                "Status": format_status(sleep4_status),
+            },
+            {
+                "Metric": "Moderate–vigorous",
+                "Hours (h)": f"{mvpa4:.1f}",
+                "Status": format_status(mvpa4_status),
+            },
+            {
+                "Metric": "Sedentary",
+                "Hours (h)": f"{sed4:.1f}",
+                "Status": format_status(sed4_status),
+            },
+            {
+                "Metric": "Light activity",
+                "Hours (h)": f"{agg4['light_h']:.1f}",
+                "Status": "—",
+            },
+        ]
+    )
+
+    # ---- 10-class model table ----
+    df_summary_10 = pd.DataFrame(
+        [
+            {
+                "Metric": "Sleep",
+                "Hours (h)": f"{sleep10:.1f}",
+                "Status": format_status(sleep10_status),
+            },
+            {
+                "Metric": "MVPA",
+                "Hours (h)": f"{mvpa10:.1f}",
+                "Status": format_status(mvpa10_status),
+            },
+            {
+                "Metric": "Sedentary",
+                "Hours (h)": f"{sed10:.1f}",
+                "Status": format_status(sed10_status),
+            },
+        ]
+    )
+
+    col_a, col_b = st.columns(2)
+
     with col_a:
-        st.subheader("4-class model (walmsley_4classes)")
-        st.markdown(
-            f"""
-            - **Sleep:** ~**{sleep4:.1f} h** → {format_status(sleep4_status)}
-            - **Moderate–vigorous:** ~**{mvpa4:.1f} h** → {format_status(mvpa4_status)}
-            - **Sedentary:** ~**{sed4:.1f} h** → {format_status(sed4_status)}
-            - **Light activity:** ~**{agg4['light_h']:.1f} h**
-            """
-        )
+        st.subheader("4-class model (Walmsley2020)")
+        st.dataframe(df_summary_4, use_container_width=True, hide_index=True)
 
     with col_b:
-        st.subheader("10-class model (willetts_10clases)")
-        st.markdown(
-            f"""
-            - **Sleep (sleep):** ~**{sleep10:.1f} h** → {format_status(sleep10_status)}
-            - **MVPA (walking/bicycling/sports/manual-work):** ~**{mvpa10:.1f} h** → {format_status(mvpa10_status)}
-            - **Sedentary (sitting/vehicle):** ~**{sed10:.1f} h** → {format_status(sed10_status)}
-            """
-        )
+        st.subheader("10-class model (WillettsSpecific2018)")
+        st.dataframe(df_summary_10, use_container_width=True, hide_index=True)
 
-    merged_for_agreement = merged_minute.dropna(subset=["activity_4classes", "activity_10classes"]).copy()
-    if not merged_for_agreement.empty:
-        agree_pct = (
-            (merged_for_agreement["activity_4classes"] == merged_for_agreement["activity_10classes"])
-            .mean() * 100
-        ).round(1)
-        st.markdown(
-            f"- On overlapping windows, both models assign the **same label** in about **{agree_pct}%** of cases."
-        )
+    sleep_status = sleep10_status
+    mvpa_status = mvpa10_status
+    sedentary_status = sed10_status
+
+
+    st.markdown("---")
+    st.header("🔍 Personalized Conclusion")
+
+    recommendations = build_recommendations(
+        sleep_status=sleep10_status,
+        mvpa_status=mvpa10_status,
+        sedentary_status=sed10_status,
+    )
+
+    st.markdown(
+        f"""
+    Based on your predicted activity patterns and current health guidelines,
+    here are some personalized recommendations:
+    """
+    )
+
+    for rec in recommendations:
+        st.markdown(f"- {rec}")
+
+
+    # with col_a:
+    #     st.subheader("4-class model (walmsley_4classes)")
+    #     st.markdown(
+    #         f"""
+    #         - **Sleep:** ~**{sleep4:.1f} h** → {format_status(sleep4_status)}
+    #         - **Moderate–vigorous:** ~**{mvpa4:.1f} h** → {format_status(mvpa4_status)}
+    #         - **Sedentary:** ~**{sed4:.1f} h** → {format_status(sed4_status)}
+    #         - **Light activity:** ~**{agg4['light_h']:.1f} h**
+    #         """
+    #     )
+
+    # with col_b:
+    #     st.subheader("10-class model (willetts_10classes)")
+    #     st.markdown(
+    #         f"""
+    #         - **Sleep (sleep):** ~**{sleep10:.1f} h** → {format_status(sleep10_status)}
+    #         - **MVPA (walking/bicycling/sports/manual-work):** ~**{mvpa10:.1f} h** → {format_status(mvpa10_status)}
+    #         - **Sedentary (sitting/vehicle):** ~**{sed10:.1f} h** → {format_status(sed10_status)}
+    #         """
+    #     )
+
+    # merged_for_agreement = merged_minute.dropna(subset=["activity_4classes", "activity_10classes"]).copy()
+    # if not merged_for_agreement.empty:
+    #     agree_pct = (
+    #         (merged_for_agreement["activity_4classes"] == merged_for_agreement["activity_10classes"])
+    #         .mean() * 100
+    #     ).round(1)
+    #     st.markdown(
+    #         f"- On overlapping windows, both models assign the **same label** in about **{agree_pct}%** of cases."
+    #     )
