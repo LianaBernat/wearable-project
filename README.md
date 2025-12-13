@@ -52,10 +52,11 @@ The best-performing model was selected for each labeling category, as follows:
 **Random Forest**
 * Activity Intensity (4 classes - Walmsley2020) ➡  it classifies the movement according to its´ intensity:
 
-    1.Sleep
-    2.Sedentay
-    3.Light activity
-    4.moderate-vigorous activity.
+1. Sleep
+2. SedentaRy
+3. Light activity
+4. Moderate-vigorous activity
+
 
 **MLP**
 * Specific Activity (10-class model: WillettsSpecific2018) ➡T his model classifies the model in 10 moviments:
