@@ -2,3 +2,8 @@ data/
 local_ignore/
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.envrc

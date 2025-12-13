@@ -28,7 +28,6 @@ import plotly.graph_objects as go
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 API_URL = "https://wearable-api-1009461955584.us-central1.run.app/predict"
-
 WINDOW_SECONDS = 5          # janela do modelo (5s)
 MAX_API_BYTES = 30 * 1024 * 1024  # 30MB
 
@@ -200,7 +199,20 @@ def aggregate_to_minutes(df: pd.DataFrame, label_col: str = "predicted_activity"
       - n_windows (quantas janelas naquele minuto)
     """
     df = df.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    ts = (
+        df["timestamp"].astype(str)
+        .str.strip()
+        .str.replace("T", " ", regex=False)
+        .str.replace("Z", "", regex=False)
+        .str.replace(r"[^\x00-\x7F]", "", regex=True)   # remove unicode invisível
+        )
+
+    df["timestamp"] = pd.to_datetime(
+        ts,
+        errors="coerce",
+        format="mixed"    # pandas ≥ 2.0 aceita múltiplos formatos
+        )
+
     df = df.dropna(subset=["timestamp"])
 
     df["minute"] = df["timestamp"].dt.floor("min")
@@ -359,9 +371,6 @@ with st.form("user_form"):
 
     submitted = st.form_submit_button("Run analysis")
 
-files = {"file": ("P043_no_annotations_small.parquet", uploaded_file)}
-response = requests.post(API_URL, files=files)
-
 
 #AFTER SUBMISSION
 if submitted:
@@ -420,6 +429,9 @@ if submitted:
 
         df_4_min = aggregate_to_minutes(df_4)
         df_10_min = aggregate_to_minutes(df_10)
+
+    #segments_4 = compress_activity_segments(df_4_min)
+    #segments_10 = compress_activity_segments(df_10_min)
 
     # -----------------------------
     # REPORT
@@ -488,8 +500,10 @@ if submitted:
         fig4.update_yaxes(title=None, showticklabels=False)
         fig4.update_layout(showlegend=True, height=250)
         st.plotly_chart(fig4, use_container_width=True)
+
     else:
         st.info("No valid data for 4-class timeline.")
+
 
     # 10-class Gantt
     st.subheader("Specific Activity (10 classes - WillettsSpecific2018)")
@@ -507,9 +521,11 @@ if submitted:
             color="predicted_activity",
             hover_data=["n_windows"],
         )
+
         fig10.update_yaxes(title=None, showticklabels=False)
         fig10.update_layout(showlegend=True, height=250)
         st.plotly_chart(fig10, use_container_width=True)
+
     else:
         st.info("No valid data for 10-class timeline.")
 
