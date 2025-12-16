@@ -347,7 +347,9 @@ st.set_page_config(
 st.title("Wearable Activity Recognition")
 st.write(
     "Upload accelerometer data from a wearable device and preview the predicted activities "
-    "using our machine learning model."
+    "using our machine learning model.\n"
+    "\nIf you don't have data, you can download the Participant-043 original file, which was excluded from the training, here: "
+    "[P043_parquet.parquet](....)"
 )
 
 st.markdown("---")
@@ -407,6 +409,9 @@ if submitted:
         st.write("✂️ Splitting data into chunks")
         time.sleep(3)
 
+        st.write("📡 Sending data to prediction API")
+        preds = load_predictions(file_bytes, uploaded_file.name, df_uploaded)
+
         st.write("🧹 Performing feature engineering")
         time.sleep(5)
 
@@ -415,9 +420,6 @@ if submitted:
 
         st.write("🧠 Applying Deep Learning model (10-classes)")
         time.sleep(10)
-
-        st.write("📡 Sending data to prediction API")
-        preds = load_predictions(file_bytes, uploaded_file.name, df_uploaded)
 
         st.write("📊 Aggregating predictions and preparing report")
         time.sleep(10)
@@ -537,7 +539,7 @@ if submitted:
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.subheader("4-class model")
+        st.subheader("4-classes model")
         fig4 = make_radial_time_plot(df_4_min[["minute", "predicted_activity"]], title="4-class (per minute)")
         if fig4 is None:
             st.info("No data to plot.")
@@ -545,7 +547,7 @@ if submitted:
             st.plotly_chart(fig4, use_container_width=True)
 
     with col_b:
-        st.subheader("10-class model")
+        st.subheader("10-classes model")
         fig10 = make_radial_time_plot(df_10_min[["minute", "predicted_activity"]], title="10-class (per minute)")
         if fig10 is None:
             st.info("No data to plot.")
@@ -583,9 +585,9 @@ if submitted:
     st.markdown(
         f"""
         - For **{user_name} ({age} years, {sex})**, we compared predictions from **both models**.
-        - **4-class model:** most frequent activity = **{main_4['activity']}**
+        - **4-classes model:** most frequent activity = **{main_4['activity']}**
         (~**{main_4['hours']:.1f} hours**, {main_4['percentage']:.1f}% of predicted windows).
-        - **10-class model:** most frequent activity = **{main_10['activity']}**
+        - **10-classes model:** most frequent activity = **{main_10['activity']}**
         (~**{main_10['hours']:.1f} hours**, {main_10['percentage']:.1f}% of predicted windows).
         """
     )
@@ -685,12 +687,9 @@ if submitted:
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.subheader("4-class model (Walmsley2020)")
+        st.subheader("Activity Intensity (4-classes model - Walmsley2020)")
         st.dataframe(df_summary_4, use_container_width=True, hide_index=True)
 
-    with col_b:
-        st.subheader("10-class model (WillettsSpecific2018)")
-        st.dataframe(df_summary_10, use_container_width=True, hide_index=True)
 
     sleep_status = sleep10_status
     mvpa_status = mvpa10_status
@@ -715,35 +714,3 @@ if submitted:
 
     for rec in recommendations:
         st.markdown(f"- {rec}")
-
-
-    # with col_a:
-    #     st.subheader("4-class model (walmsley_4classes)")
-    #     st.markdown(
-    #         f"""
-    #         - **Sleep:** ~**{sleep4:.1f} h** → {format_status(sleep4_status)}
-    #         - **Moderate–vigorous:** ~**{mvpa4:.1f} h** → {format_status(mvpa4_status)}
-    #         - **Sedentary:** ~**{sed4:.1f} h** → {format_status(sed4_status)}
-    #         - **Light activity:** ~**{agg4['light_h']:.1f} h**
-    #         """
-    #     )
-
-    # with col_b:
-    #     st.subheader("10-class model (willetts_10classes)")
-    #     st.markdown(
-    #         f"""
-    #         - **Sleep (sleep):** ~**{sleep10:.1f} h** → {format_status(sleep10_status)}
-    #         - **MVPA (walking/bicycling/sports/manual-work):** ~**{mvpa10:.1f} h** → {format_status(mvpa10_status)}
-    #         - **Sedentary (sitting/vehicle):** ~**{sed10:.1f} h** → {format_status(sed10_status)}
-    #         """
-    #     )
-
-    # merged_for_agreement = merged_minute.dropna(subset=["activity_4classes", "activity_10classes"]).copy()
-    # if not merged_for_agreement.empty:
-    #     agree_pct = (
-    #         (merged_for_agreement["activity_4classes"] == merged_for_agreement["activity_10classes"])
-    #         .mean() * 100
-    #     ).round(1)
-    #     st.markdown(
-    #         f"- On overlapping windows, both models assign the **same label** in about **{agree_pct}%** of cases."
-    #     )
