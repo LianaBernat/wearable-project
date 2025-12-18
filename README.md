@@ -33,11 +33,13 @@ It was developed by:
 
 
 ## Data Preparation
-### Why Preparation is Necessary
+## Data Preparation
+
+### Why Preparation Is Necessary
 
 The Capture-24 dataset contains wrist-worn accelerometer data collected from 151 participants between 2014 and 2016 in the Oxfordshire region. Participants wore an Axivity AX3 device during daily living for approximately 24 hours. Activity labels were obtained using wearable cameras and sleep diaries, totaling more than 2,500 hours of annotated data.
 
-The data are provided as one CSV file per participant, with a sampling interval of 0.01 s, resulting in an average of approximately 9 million rows per participant. This makes working directly with the raw time series computationally expensive and impractical for most modeling approaches.
+The data are provided as one CSV file per participant, with a sampling interval of 0.01 s, resulting in an average of approximately 9 million rows per participant and more than 1 billion rows in total. This makes working directly with the raw time series computationally expensive and impractical for most modeling approaches.
 
 In addition, raw acceleration values are not very informative on their own, but when processed over small time windows, they can reveal useful patterns for identifying different types of movement.
 
@@ -47,28 +49,28 @@ The continuous acceleration signals were segmented into fixed, non-overlapping t
 
 Windows were discarded if they contained missing timestamps or accelerometer values (x, y, or z), fewer than 250 samples, or insufficient annotation coverage. Specifically, windows in which 50% or more of the activity annotations were missing were excluded to reduce label noise.
 
+Processing was performed in non-overlapping chunks. Some observations at chunk boundaries were intentionally discarded to ensure that processing remained feasible in terms of memory usage and execution time.
+
 ### Feature Extraction and Label Assignment
 
-From each valid window, a set of features was extracted to summarize the acceleration signal:
-- Time-domain features (mean, standard deviation, minimum, and maximum per axis)
-- Energy-based features and mean acceleration magnitude
-- Inter-axis correlations (x–y, x–z, y–z)
-- Frequency-domain features extracted using FFT (Welch method applied to the magnitude signal)
+From each valid 5-second window, the following steps were applied:
 
-Activity labels were assigned at the window level using majority voting over the annotations within each window. Fixed label encoding was applied, with ambiguous windows marked as −1.
+- **Feature extraction** to summarize the acceleration signal:
+  - Time-domain features (mean, standard deviation, minimum, and maximum per axis)
+  - Energy-based features and mean acceleration magnitude
+  - Inter-axis correlations (x–y, x–z, y–z)
+  - Frequency-domain features extracted using FFT (Welch method applied to the magnitude signal)
 
-Additional features were evaluated but discarded in the final versions of both models, as explained in the next section:
-- Cyclic time features (hour sine and cosine)
-- Participant metadata (ID, sex, age group)
+- **Label assignment** using majority voting over the annotations within each window. Fixed label encoding was applied, with ambiguous windows marked as −1.
 
-The following fields were retained for auditing and traceability purposes:
-- Window start and end timestamps
-- Number of samples per window
-- Window duration
+- **Additional features** were evaluated but discarded, as explained in the next section:
+  - Cyclic time features (hour sine and cosine)
+  - Participant metadata (ID, sex, age group)
 
-### Processing in Chunks
-
-Window processing was performed in non-overlapping chunks. Some observations at chunk boundaries were intentionally discarded to ensure that processing remained feasible in terms of memory usage and execution time.
+- **Audit and traceability fields** retained for each window:
+  - Window start and end timestamps
+  - Number of samples per window
+  - Window duration
 
 ## Feature Selection and Modeling Decisions
 During model development, we evaluated the inclusion of participant sex, age group, and time-of-day information. Although these features increased overall accuracy, they degraded the F1-score of less frequent classes. Given the strong class imbalance, the final models rely exclusively on features derived from raw tri-axial acceleration signals.
