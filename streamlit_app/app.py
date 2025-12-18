@@ -27,6 +27,7 @@ import plotly.graph_objects as go
 # -----------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+APP_DIR = Path(__file__).resolve().parent
 API_URL = "https://wearable-api-1009461955584.us-central1.run.app/predict"
 WINDOW_SECONDS = 5          # janela do modelo (5s)
 MAX_API_BYTES = 30 * 1024 * 1024  # 30MB
@@ -340,7 +341,7 @@ def build_recommendations(sleep_status, mvpa_status, sedentary_status):
 # CONFIG AND UI LAYOUT
 # -----------------------------
 
-image = BASE_DIR / "streamlit_app" /"image.png"
+image = APP_DIR / "image.png"
 
 st.set_page_config(
     page_title="Wearable Activity Recognition", page_icon="⏱️", layout="wide"
