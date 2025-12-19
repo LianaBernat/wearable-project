@@ -1,9 +1,5 @@
 # Wearable Activity Recognition
 
-<p align="left"> <img src="assets/wearable_activity_recognition_logo.png" alt="Wearable Activity Recognition" width="150"></p>
-
-***
-
 This project presents an end-to-end wearable activity recognition system.
 
 The solution includes:
