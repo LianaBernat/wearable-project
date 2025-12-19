@@ -1,4 +1,7 @@
 # Wearable Activity Recognition
+
+<p align="left"> <img src="assets/wearable_activity_recognition_logo.png" alt="Wearable Activity Recognition" width="150"></p>
+
 ***
 
 This project presents an end-to-end wearable activity recognition system.
@@ -124,6 +127,7 @@ The API applies both trained models:
 
 Predictions are returned as structured JSON responses and consumed by the Streamlit application to generate visual summaries and daily activity reports.
 
+⚠️ Note: When using the provided example file (approximately 9 million rows), inference typically takes around 2–3 minutes.
 ## Future Improvements
 
 - Apply a Leave-One-Participant-Out (LOPO) evaluation strategy to better assess model generalization across unseen participants.
