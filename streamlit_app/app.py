@@ -20,6 +20,7 @@ import streamlit as st
 from pathlib import Path
 import time
 import plotly.graph_objects as go
+from PIL import Image
 
 
 # -----------------------------
@@ -27,6 +28,8 @@ import plotly.graph_objects as go
 # -----------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+APP_DIR = Path(__file__).resolve().parent
+LOGO_PATH = APP_DIR / "image.png"
 API_URL = "https://wearable-api-1009461955584.us-central1.run.app/predict"
 WINDOW_SECONDS = 5          # janela do modelo (5s)
 MAX_API_BYTES = 30 * 1024 * 1024  # 30MB
@@ -340,19 +343,31 @@ def build_recommendations(sleep_status, mvpa_status, sedentary_status):
 # CONFIG AND UI LAYOUT
 # -----------------------------
 
+image = Image.open(LOGO_PATH)
+
 st.set_page_config(
-    page_title="Wearable Activity Classifier", page_icon="⏱️", layout="wide"
+    page_title="Wearable Activity Recognition", page_icon="⏱️", layout="wide"
 )
 
-st.title("Wearable Activity Recognition")
+col_title, col_logo = st.columns([6, 1])
+
+with col_title:
+    st.title("Wearable Activity Recognition")
+
+with col_logo:
+    st.image(image, width=120)
+
+
+# st.title("Wearable Activity Recognition")
 st.write(
     "Upload accelerometer data from a wearable device and preview the predicted activities "
     "using our machine learning model.\n"
     "\nIf you don't have data, you can download the Participant-043 original file, which was excluded from the training, here: "
-    "[P043_parquet.parquet](....)"
+    "[P043-Data](https://github.com/LianaBernat/wearable-project/tree/master/sample_data)"
 )
 
 st.markdown("---")
+
 
 
 # USER INPUT FORM
@@ -404,25 +419,25 @@ if submitted:
     with st.status("Running activity recognition pipeline...", expanded=True) as status:
 
         st.write("📥 File received and validated")
-        time.sleep(1)
+        time.sleep(0.3)
 
         st.write("✂️ Splitting data into chunks")
-        time.sleep(3)
+        time.sleep(0.3)
 
         st.write("📡 Sending data to prediction API")
         preds = load_predictions(file_bytes, uploaded_file.name, df_uploaded)
 
         st.write("🧹 Performing feature engineering")
-        time.sleep(5)
+        time.sleep(0.3)
 
         st.write("🌲 Applying Random Forest model (4-classes)")
-        time.sleep(10)
+        time.sleep(0.3)
 
-        st.write("🧠 Applying Deep Learning model (10-classes)")
-        time.sleep(10)
+        st.write("🧠 Applying Multilayer Neural Network (10-classes)")
+        time.sleep(0.3)
 
         st.write("📊 Aggregating predictions and preparing report")
-        time.sleep(10)
+        time.sleep(0.3)
 
         status.update(label="✅ Processing completed", state="complete")
 
@@ -432,8 +447,6 @@ if submitted:
         df_4_min = aggregate_to_minutes(df_4)
         df_10_min = aggregate_to_minutes(df_10)
 
-    #segments_4 = compress_activity_segments(df_4_min)
-    #segments_10 = compress_activity_segments(df_10_min)
 
     # -----------------------------
     # REPORT
@@ -481,7 +494,7 @@ if submitted:
 
     # TIMELINE
     st.markdown("---")
-    st.header("Activity Timeline (Gantt-style)")
+    st.header("Activity Timeline")
 
     # 4-class Gantt
     st.subheader("Activity Intensity (4 classes - Walmsley2020)")
@@ -534,7 +547,7 @@ if submitted:
 
     # RADIAL ACTIVITY VIEW
     st.markdown("---")
-    st.header("Radial Activity View (Clock-style)")
+    st.header("Radial Activity View (24h Clock)")
 
     col_a, col_b = st.columns(2)
 
@@ -553,27 +566,6 @@ if submitted:
             st.info("No data to plot.")
         else:
             st.plotly_chart(fig10, use_container_width=True)
-
-
-    # PREDICTED WINDOWS
-    st.markdown("---")
-    st.header("Sample of Predicted Windows (Grouped by Minute)")
-
-
-    df_4_min_ren = df_4_min[["minute", "predicted_activity"]].rename(
-        columns={"predicted_activity": "Activity Intensity (4 classes)"}
-    )
-    df_10_min_ren = df_10_min[["minute", "predicted_activity"]].rename(
-        columns={"predicted_activity": "Activity Specific (10 classes)"}
-    )
-
-    merged_minute = (
-        pd.merge(df_4_min_ren, df_10_min_ren, on="minute", how="outer")
-        .sort_values("minute")
-    )
-
-    st.dataframe(merged_minute.head(50))
-
 
 
     # SUMMARY BASED ON GUIDELINES
@@ -714,3 +706,23 @@ if submitted:
 
     for rec in recommendations:
         st.markdown(f"- {rec}")
+
+# FOOTER
+st.markdown("""
+<style>
+.footer {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    background-color: #f0f2f6; /* Cor de fundo */
+    text-align: center;
+    padding: 10px;
+    font-size: 12px;
+    color: #888;
+}
+</style>
+<div class="footer">
+    <p>© 2025 Wearable Activity Recognition | Developed by: Liana Bernat, Renan Santos e Renata Grassi | Developed through: <a href="https://streamlit.io" target="_blank">Streamlit</a> </p>
+</div>
+""", unsafe_allow_html=True)
