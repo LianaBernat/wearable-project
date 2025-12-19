@@ -12,6 +12,7 @@ paths for input/output directories used by the Capture-24 pipeline.
 PATH = '../../data/data_processed/participants'
 FILE = 'Participants_all.parquet'
 DATAFILE = f"{PATH}/{FILE}"
+MODEL_OUTPUT_PATH = ".../models/random_forest.joblib"
 
 COLS_TO_DROP = [
     "pid",

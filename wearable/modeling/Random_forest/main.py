@@ -1,28 +1,43 @@
 import pandas as pd
-import config
-import random_forest as RF
 import joblib
 
+from . import config
+from . import random_forest as RF
 
-df = pd.read_parquet(config.DATAFILE)
-df = RF.compress(df)
 
-X = RF.prepare_X(df)
+def train_random_forest(save_model: bool = True):
+    """
+    Trains the Random Forest model using the prepared Capture-24 dataset.
+    Returns the trained model.
+    """
 
-y, target_col = RF.select_target(df)
+    # Load dataset
+    df = pd.read_parquet(config.DATAFILE)
 
-X_train, X_test, y_train, y_test = RF.split_data(X, y)
-X_train, X_test = RF.adjust_coor(X_train, X_test)
-X_train_imp, X_test_imp = RF.impute_missing(X_train, X_test)
+    # Feature preparation
+    df = RF.compress(df)
+    X = RF.prepare_X(df)
+    y, target_col = RF.select_target(df)
 
-X_train_res, y_train_res = RF.apply_smote(X_train_imp, y_train)
+    # Train / test split
+    X_train, X_test, y_train, y_test = RF.split_data(X, y)
 
-model = RF.train_model(X_train_res, y_train_res)
+    # Coordinate adjustment & imputation
+    X_train, X_test = RF.adjust_coor(X_train, X_test)
+    X_train_imp, X_test_imp = RF.impute_missing(X_train, X_test)
 
-RF.evaluate_model(model, X_test_imp, y_test, target_col)
+    # Handle imbalance
+    X_train_res, y_train_res = RF.apply_smote(X_train_imp, y_train)
 
-joblib.dump(model, "randomforest.joblib")
-print("\nModelo salvo em randomforest.joblib")
+    # Train model
+    model = RF.train_model(X_train_res, y_train_res)
 
-#joblib.dump(imputer, "../model_rf/imputer.joblib")
-#print("Imputer salvo em model_rf/imputer.joblib")
+    # Evaluation (console output only)
+    RF.evaluate_model(model, X_test_imp, y_test, target_col)
+
+    # Persist model
+    if save_model:
+        joblib.dump(model, config.MODEL_OUTPUT_PATH)
+        print(f"\n[OK] Random Forest model saved at {config.MODEL_OUTPUT_PATH}")
+
+    return model
